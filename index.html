@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0A0E13">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>OksiTakip</title>
+<style>
+/* ================= OksiTakip — gece başucu monitörü ================= */
+/* Tek tema (bilinçli tercih): karanlık odada okunabilir tıbbi monitör görünümü.
+   Cihazın kendi TFT ekran renkleri temel alındı: SpO2 sarı, nabız yeşil, PI camgöbeği. */
+:root{
+  --bg:#0A0E13;
+  --surface:#121923;
+  --surface2:#19242F;
+  --line:#24333F;
+  --ink:#EAF2F7;
+  --muted:#8297A6;
+  --faint:#5A6E7C;
+  --spo2:#E4E96B;
+  --pr:#6BCB77;
+  --pi:#54C7DC;
+  --alert:#FF5A5A;
+  --amber:#F0B429;
+  --ok:#3ECF8E;
+  --radius:14px;
+  --num:"SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  font-size:16px;line-height:1.45;
+  min-height:100vh;
+  padding-bottom:76px; /* alt gezinme çubuğu payı */
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent}
+input{font:inherit;color:inherit}
+canvas{display:block;width:100%}
+
+/* ---- üst çubuk ---- */
+header{
+  display:flex;align-items:center;gap:10px;
+  padding:14px 16px 10px;
+  position:sticky;top:0;z-index:20;
+  background:linear-gradient(var(--bg) 75%,transparent);
+}
+.brand{font-weight:700;letter-spacing:.02em;font-size:18px}
+.brand small{color:var(--muted);font-weight:500;font-size:12px;display:block;letter-spacing:.06em}
+.spacer{flex:1}
+.chip{
+  display:inline-flex;align-items:center;gap:7px;
+  border:1px solid var(--line);border-radius:999px;
+  padding:6px 12px;font-size:13px;color:var(--muted);
+  background:var(--surface);white-space:nowrap;
+}
+.chip .dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
+.chip.on  .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.chip.on{color:var(--ink)}
+.chip.busy .dot{background:var(--amber);animation:blink 1s infinite}
+.chip.err .dot{background:var(--alert)}
+@keyframes blink{50%{opacity:.25}}
+#batt{font-size:12px;color:var(--muted)}
+
+/* ---- alarm bandı ---- */
+#alarmBar{
+  display:none;position:sticky;top:0;z-index:30;
+  background:var(--alert);color:#22090B;
+  padding:12px 16px;font-weight:700;
+  align-items:center;gap:12px;
+}
+#alarmBar.show{display:flex}
+#alarmBar .val{font-family:var(--num);font-size:22px}
+#alarmBar button{
+  margin-left:auto;background:#22090B;color:#FFD9D9;
+  border-radius:10px;padding:8px 14px;font-weight:600;font-size:14px;
+}
+body.alarming{animation:redpulse 1.2s infinite}
+@keyframes redpulse{
+  0%,100%{box-shadow:inset 0 0 0 0 rgba(255,90,90,0)}
+  50%{box-shadow:inset 0 0 0 6px rgba(255,90,90,.55)}
+}
+
+/* ---- bölümler ---- */
+main{padding:0 16px;max-width:560px;margin:0 auto}
+section{display:none}
+section.active{display:block}
+h2{font-size:15px;color:var(--muted);font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin:22px 0 10px}
+
+/* ---- canlı kartlar ---- */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tile{
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);padding:14px 16px 10px;
+  overflow:hidden;
+}
+.tile .lab{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:7px;letter-spacing:.04em}
+.tile .lab .sw{width:9px;height:9px;border-radius:3px;flex:none}
+.tile .big{
+  font-family:var(--num);font-variant-numeric:tabular-nums;
+  font-size:64px;font-weight:700;line-height:1.05;margin-top:2px;
+}
+.tile .unit{font-size:15px;color:var(--muted);font-family:var(--num);margin-left:2px}
+#tileSpo2 .big{color:var(--spo2)}
+#tilePr .big{color:var(--pr)}
+#tileSpo2.low .big{color:var(--alert)}
+.tile .sub{font-size:13px;color:var(--muted);font-family:var(--num);margin-top:2px}
+.sparkwrap{margin-top:6px;height:42px}
+.meta-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.pill{
+  background:var(--surface);border:1px solid var(--line);border-radius:999px;
+  padding:6px 12px;font-size:13px;color:var(--muted);
+}
+.pill b{color:var(--ink);font-family:var(--num);font-weight:600}
+
+/* ---- büyük grafik ---- */
+.chartcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 12px 6px;margin-top:10px}
+.chartcard .cap{font-size:13px;color:var(--muted);margin-bottom:4px;display:flex;gap:8px;align-items:center}
+.chartcard .cap .sw{width:9px;height:9px;border-radius:3px}
+
+/* ---- butonlar ---- */
+.btnrow{display:flex;gap:10px;margin:16px 0}
+.btn{
+  flex:1;border-radius:12px;padding:14px 16px;font-weight:700;font-size:16px;
+  text-align:center;border:1px solid var(--line);background:var(--surface2);
+}
+.btn.primary{background:var(--spo2);color:#1A1C05;border-color:transparent}
+.btn.danger{background:none;color:var(--alert);border-color:#4A2626}
+.btn.ghost{background:none;color:var(--muted)}
+.btn:disabled{opacity:.4}
+.note{font-size:13px;color:var(--muted);margin:10px 2px}
+.note a{color:var(--pi)}
+
+/* ---- uyumluluk uyarısı ---- */
+.warn{
+  background:#2A1E10;border:1px solid #56421F;border-radius:var(--radius);
+  padding:14px;font-size:14px;color:#F2D9A6;margin-top:14px;display:none;
+}
+.warn.show{display:block}
+.warn b{color:#FFE9BF}
+.warn ol{margin:8px 0 0 18px;display:grid;gap:6px}
+
+/* ---- geçmiş ---- */
+.sess{
+  width:100%;text-align:left;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:13px 15px;margin-bottom:9px;display:block;
+}
+.sess .d{font-weight:600}
+.sess .s{font-size:13px;color:var(--muted);margin-top:3px;font-family:var(--num)}
+.sess .s .bad{color:var(--alert);font-weight:700}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.stat .k{font-size:12px;color:var(--muted)}
+.stat .v{font-family:var(--num);font-size:20px;font-weight:700;margin-top:2px}
+.stat .v.bad{color:var(--alert)}
+#detBack{margin:14px 0 4px;color:var(--pi);font-weight:600;font-size:15px}
+.empty{color:var(--faint);text-align:center;padding:40px 10px;font-size:14px}
+
+/* ---- ayarlar ---- */
+.set{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:14px 16px;margin-bottom:10px;
+}
+.set .t{font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.set .d{font-size:13px;color:var(--muted);margin-top:4px}
+.set input[type=range]{width:100%;margin-top:12px;accent-color:var(--spo2)}
+.set input[type=number]{
+  width:74px;background:var(--surface2);border:1px solid var(--line);
+  border-radius:9px;padding:7px 9px;font-family:var(--num);text-align:center;
+}
+.thrval{font-family:var(--num);font-weight:700;font-size:22px;color:var(--spo2)}
+.switch{position:relative;width:50px;height:29px;flex:none}
+.switch input{opacity:0;width:0;height:0}
+.switch i{
+  position:absolute;inset:0;background:var(--surface2);border:1px solid var(--line);
+  border-radius:999px;transition:.18s;
+}
+.switch i:before{
+  content:"";position:absolute;width:21px;height:21px;border-radius:50%;
+  background:var(--muted);top:3px;left:3px;transition:.18s;
+}
+.switch input:checked+i{background:var(--ok);border-color:transparent}
+.switch input:checked+i:before{background:#06281A;transform:translateX(21px)}
+.inline{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:14px;color:var(--muted)}
+.linkbtn{color:var(--pi);font-weight:600;padding:10px 0;display:block}
+#rawlog{
+  font-family:var(--num);font-size:11px;color:var(--faint);
+  background:var(--bg);border-radius:9px;padding:9px;margin-top:9px;
+  max-height:150px;overflow:auto;white-space:pre;display:none;
+}
+#rawlog.show{display:block}
+.disclaimer{font-size:12px;color:var(--faint);margin:22px 0;line-height:1.5}
+
+/* ---- alt gezinme ---- */
+nav{
+  position:fixed;bottom:0;left:0;right:0;z-index:25;
+  display:flex;background:rgba(10,14,19,.92);
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  border-top:1px solid var(--line);
+  padding-bottom:env(safe-area-inset-bottom);
+}
+nav button{
+  flex:1;padding:12px 0 10px;color:var(--faint);font-size:12px;font-weight:600;
+  display:grid;gap:3px;justify-items:center;
+}
+nav button svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+nav button.active{color:var(--spo2)}
+:focus-visible{outline:2px solid var(--pi);outline-offset:2px;border-radius:6px}
+@media (prefers-reduced-motion:reduce){
+  body.alarming{animation:none;box-shadow:inset 0 0 0 6px rgba(255,90,90,.55)}
+  .chip.busy .dot{animation:none}
+}
+</style>
+</head>
+<body>
+
+<div id="alarmBar" role="alert">
+  <span>DÜŞÜK SpO₂</span><span class="val" id="alarmVal">—</span>
+  <button id="btnMute">Sustur · 1 dk</button>
+</div>
+
+<header>
+  <div class="brand">OksiTakip<small>YK-80B oksijen &amp; nabız</small></div>
+  <div class="spacer"></div>
+  <span id="batt" hidden>🔋 <b>—</b>%</span>
+  <span class="chip" id="chip"><span class="dot"></span><span id="chipTxt">Bağlı değil</span></span>
+</header>
+
+<main>
+
+<!-- ============ CANLI ============ -->
+<section id="secLive" class="active">
+  <div class="tiles">
+    <div class="tile" id="tileSpo2">
+      <div class="lab"><span class="sw" style="background:var(--spo2)"></span>SpO₂</div>
+      <div class="big"><span id="vSpo2">--</span><span class="unit">%</span></div>
+      <div class="sparkwrap"><canvas id="sparkSpo2" height="42"></canvas></div>
+    </div>
+    <div class="tile" id="tilePr">
+      <div class="lab"><span class="sw" style="background:var(--pr)"></span>Nabız</div>
+      <div class="big"><span id="vPr">--</span><span class="unit">bpm</span></div>
+      <div class="sparkwrap"><canvas id="sparkPr" height="42"></canvas></div>
+    </div>
+  </div>
+
+  <div class="meta-row">
+    <span class="pill">PI <b id="vPi">--</b>%</span>
+    <span class="pill">Son veri <b id="vAge">—</b></span>
+    <span class="pill">Kayıt <b id="vCount">0</b> ölçüm</span>
+  </div>
+
+  <div class="chartcard">
+    <div class="cap"><span class="sw" style="background:var(--spo2)"></span>SpO₂ · son 30 dakika <span style="margin-left:auto;color:var(--faint)" id="thrCap"></span></div>
+    <canvas id="liveChart" height="130"></canvas>
+  </div>
+
+  <div class="btnrow">
+    <button class="btn primary" id="btnConnect">Cihaza bağlan</button>
+    <button class="btn danger" id="btnDisconnect" hidden>Bağlantıyı kes</button>
+  </div>
+  <div class="btnrow" style="margin-top:0">
+    <button class="btn ghost" id="btnDemo">Demo modu</button>
+    <button class="btn ghost" id="btnAlarmTest">Alarmı test et</button>
+  </div>
+
+  <div class="warn" id="compatWarn">
+    <b>Bu tarayıcı Bluetooth'u desteklemiyor.</b>
+    <ol>
+      <li><b>Android:</b> Bu sayfayı <b>Chrome</b> ile açın.</li>
+      <li><b>iPhone:</b> App Store'dan ücretsiz <b>Bluefy</b> tarayıcısını indirin ve bu sayfanın adresini Bluefy içinde açın (Safari, Bluetooth'a izin vermez).</li>
+      <li>Sayfanın <b>https://</b> ile başlayan bir adresten açıldığından emin olun.</li>
+    </ol>
+  </div>
+
+  <p class="note">İpucu: Gece boyu takip için telefonu şarja takın ve Ayarlar'dan <b>“Ekranı açık tut”</b> özelliğini açın. Ekran kapanırsa tarayıcı Bluetooth bağlantısını koparabilir.</p>
+</section>
+
+<!-- ============ GEÇMİŞ ============ -->
+<section id="secHist">
+  <div id="histList">
+    <h2>Kayıtlı oturumlar</h2>
+    <div id="sessList"></div>
+  </div>
+  <div id="histDetail" style="display:none">
+    <button id="detBack">‹ Tüm oturumlar</button>
+    <div id="detTitle" style="font-weight:700;font-size:17px;margin-bottom:2px"></div>
+    <div id="detSub" style="color:var(--muted);font-size:13px;margin-bottom:10px"></div>
+    <div class="stats" id="detStats"></div>
+    <div class="chartcard">
+      <div class="cap"><span class="sw" style="background:var(--spo2)"></span>SpO₂ (%)</div>
+      <canvas id="detSpo2" height="150"></canvas>
+    </div>
+    <div class="chartcard">
+      <div class="cap"><span class="sw" style="background:var(--pr)"></span>Nabız (bpm)</div>
+      <canvas id="detPr" height="150"></canvas>
+    </div>
+    <div class="btnrow">
+      <button class="btn" id="btnCsv">CSV indir</button>
+      <button class="btn danger" id="btnDelSess">Oturumu sil</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ AYARLAR ============ -->
+<section id="secSet">
+  <h2>Alarm</h2>
+  <div class="set">
+    <div class="t">SpO₂ alarm eşiği <span class="thrval"><span id="thrShow">85</span>%</span></div>
+    <div class="d">Oksijen doygunluğu bu değere veya altına düşüp ~4 saniye kalırsa sesli alarm çalar, telefon titrer ve bildirim gönderilir.</div>
+    <input type="range" id="thr" min="80" max="94" step="1" value="85">
+  </div>
+  <div class="set">
+    <div class="t">Nabız alarmı <label class="switch"><input type="checkbox" id="prAlarmOn"><i></i></label></div>
+    <div class="d">Nabız aralık dışına çıkarsa uyar.</div>
+    <div class="inline">Alt <input type="number" id="prLow" value="45" min="30" max="90"> · Üst <input type="number" id="prHigh" value="130" min="90" max="220"> bpm</div>
+  </div>
+  <div class="set">
+    <div class="t">Ekranı açık tut <label class="switch"><input type="checkbox" id="wakeOn" checked><i></i></label></div>
+    <div class="d">Gece takibi sırasında ekranın kapanmasını engeller (telefon şarjda olmalı).</div>
+  </div>
+  <div class="set">
+    <div class="t">Bildirimler</div>
+    <div class="d" id="notifState">Alarm anında sistem bildirimi gönderebilmek için izin gerekir.</div>
+    <button class="linkbtn" id="btnNotif">Bildirim izni ver</button>
+  </div>
+  <div class="set">
+    <div class="t">Ses testi</div>
+    <div class="d">Alarm sesinin telefonunuzda duyulduğunu kontrol edin (sesi açın, sessiz modu kapatın).</div>
+    <button class="linkbtn" id="btnSound">Alarm sesini çal</button>
+  </div>
+
+  <h2>Gelişmiş</h2>
+  <div class="set">
+    <div class="t">Ham veri paketleri <label class="switch"><input type="checkbox" id="rawOn"><i></i></label></div>
+    <div class="d">Cihazdan gelen çiğ Bluetooth paketleri. Ölçümler cihaz ekranıyla uyuşmazsa buranın ekran görüntüsünü paylaşın.</div>
+    <div id="rawlog"></div>
+  </div>
+  <div class="set">
+    <div class="t">Tüm kayıtları sil</div>
+    <button class="linkbtn" id="btnWipe" style="color:var(--alert)">Geçmişi kalıcı olarak temizle</button>
+  </div>
+
+  <h2>Kurulum</h2>
+  <div class="set">
+    <div class="d" style="margin-top:0">
+      <b style="color:var(--ink)">Android:</b> Bu adresi Chrome'da açın → “Cihaza bağlan” → listeden <b>OXIMETER-BLE</b>'yi seçin. Ana ekrana eklemek için Chrome menüsü → “Ana ekrana ekle”.<br><br>
+      <b style="color:var(--ink)">iPhone:</b> App Store'dan ücretsiz <b>Bluefy – Web BLE Browser</b> uygulamasını indirin, bu adresi Bluefy'de açın ve “Cihaza bağlan”a dokunun.<br><br>
+      Cihazı parmağınıza takıp açtıktan sonra bağlanın; cihaz ~8 sn sinyalsiz kalırsa kendini kapatır.
+    </div>
+  </div>
+
+  <p class="disclaimer">OksiTakip kişisel bir yardımcı araçtır; tıbbi cihaz değildir ve tıbbi tanı, tedavi veya izleme amacıyla kullanılamaz. Ölçümler cihazın kendisinden gelir ve hatalı olabilir. Kendinizi kötü hissediyorsanız veya değerler düşükse vakit kaybetmeden sağlık kuruluşuna başvurun (112).</p>
+</section>
+
+</main>
+
+<nav>
+  <button data-sec="secLive" class="active" aria-label="Canlı">
+    <svg viewBox="0 0 24 24"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg>Canlı
+  </button>
+  <button data-sec="secHist" aria-label="Geçmiş">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>Geçmiş
+  </button>
+  <button data-sec="secSet" aria-label="Ayarlar">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2z"/></svg>Ayarlar
+  </button>
+</nav>
+
+<script>
+"use strict";
+/* =====================================================================
+   OksiTakip — Artımed / Yonker YK-80B (OXIMETER-BLE) için web uygulaması
+   Protokol: FFE0 servisi, FFE2 notify karakteristiği.
+   Paket: 20 bayt, A7 .. 7A ; sağlama = bayt[2..17] toplamının son baytı.
+   ===================================================================== */
+const $ = s => document.querySelector(s);
+const SERVICE = 0xFFE0, CHAR_NOTIFY = 0xFFE2;
+
+/* ---------- durum ---------- */
+const st = {
+  device:null, char:null, connected:false, manual:false, demo:false,
+  session:null, sessDirty:false,
+  ring:[],            // canlı grafik: son ~35 dk {t,spo2,pr}
+  lastReading:0, lastFrame:0,
+  lowCount:0, okCount:0, alarm:false, muteUntil:0,
+  prSrc:+(localStorage.getItem('prSrc')||7),
+  pr7:[], pr8:[],
+  wakeLock:null, audio:null,
+  raw:[],
+};
+const cfg = {
+  get thr(){ return +(localStorage.getItem('thr')||85) },
+  set thr(v){ localStorage.setItem('thr',v) },
+  get prOn(){ return localStorage.getItem('prOn')==='1' },
+  set prOn(v){ localStorage.setItem('prOn',v?'1':'0') },
+  get prLow(){ return +(localStorage.getItem('prLow')||45) },
+  set prLow(v){ localStorage.setItem('prLow',v) },
+  get prHigh(){ return +(localStorage.getItem('prHigh')||130) },
+  set prHigh(v){ localStorage.setItem('prHigh',v) },
+  get wake(){ return localStorage.getItem('wake')!=='0' },
+  set wake(v){ localStorage.setItem('wake',v?'1':'0') },
+};
+
+/* ---------- IndexedDB ---------- */
+let db;
+function openDB(){
+  return new Promise((res,rej)=>{
+    const r = indexedDB.open('oksitakip',1);
+    r.onupgradeneeded = e => e.target.result.createObjectStore('sessions',{keyPath:'id'});
+    r.onsuccess = e => { db=e.target.result; res(); };
+    r.onerror = () => rej(r.error);
+  });
+}
+const tx = mode => db.transaction('sessions',mode).objectStore('sessions');
+const idbPut = s => new Promise(r=>{ tx('readwrite').put(s).onsuccess=r; });
+const idbAll = () => new Promise(r=>{ const q=tx('readonly').getAll(); q.onsuccess=()=>r(q.result||[]); });
+const idbDel = id => new Promise(r=>{ tx('readwrite').delete(id).onsuccess=r; });
+
+/* ---------- yardımcılar ---------- */
+const pad = n => String(n).padStart(2,'0');
+const hhmm = t => { const d=new Date(t); return pad(d.getHours())+':'+pad(d.getMinutes()); };
+const dstr = t => { const d=new Date(t); return d.toLocaleDateString('tr-TR',{day:'numeric',month:'long'})+' '+hhmm(t); };
+const durstr = ms => { const m=Math.round(ms/60000); return m<60? m+' dk' : Math.floor(m/60)+' sa '+(m%60)+' dk'; };
+
+/* =====================================================================
+   BLE
+===================================================================== */
+async function connect(){
+  if(!navigator.bluetooth){ $('#compatWarn').classList.add('show'); return; }
+  askNotif(); initAudio();
+  try{
+    setChip('busy','Cihaz seçiliyor…');
+    st.device = await navigator.bluetooth.requestDevice({
+      filters:[{namePrefix:'OXIMETER'},{namePrefix:'Oximeter'},{services:[SERVICE]}],
+      optionalServices:[SERVICE,0x180F,0x180A]
+    });
+    st.device.addEventListener('gattserverdisconnected', onDisconnect);
+    st.manual=false;
+    await gattConnect();
+  }catch(e){
+    if(String(e).includes('cancel')){ setChip('','Bağlı değil'); return; }
+    setChip('err','Bağlanamadı'); console.error(e);
+  }
+}
+async function gattConnect(){
+  setChip('busy','Bağlanıyor…');
+  const server = await st.device.gatt.connect();
+  const svc = await server.getPrimaryService(SERVICE);
+  st.char = await svc.getCharacteristic(CHAR_NOTIFY);
+  await st.char.startNotifications();
+  st.char.addEventListener('characteristicvaluechanged', onNotify);
+  st.connected=true;
+  setChip('on', st.device.name||'Bağlı');
+  $('#btnConnect').hidden=true; $('#btnDisconnect').hidden=false;
+  startSession();
+  acquireWake();
+  readBattery(server).catch(()=>{});
+}
+async function readBattery(server){
+  const s = await server.getPrimaryService(0x180F);
+  const c = await s.getCharacteristic(0x2A19);
+  const render = v => { $('#batt').hidden=false; $('#batt').querySelector('b').textContent=v; };
+  render((await c.readValue()).getUint8(0));
+  try{ await c.startNotifications(); c.addEventListener('characteristicvaluechanged',e=>render(e.target.value.getUint8(0))); }catch(_){}
+}
+function onDisconnect(){
+  st.connected=false; st.char=null;
+  if(st.manual){ setChip('','Bağlı değil'); endSession(); return; }
+  setChip('busy','Yeniden bağlanıyor…');
+  retry(0);
+}
+async function retry(n){
+  if(st.manual||st.connected||!st.device) return;
+  try{ await gattConnect(); }
+  catch(e){
+    if(n>200){ setChip('err','Bağlantı koptu'); endSession(); return; }
+    setTimeout(()=>retry(n+1), Math.min(2000+n*500,8000));
+  }
+}
+function disconnect(){
+  st.manual=true;
+  st.demo=false;
+  if(st.device&&st.device.gatt.connected) st.device.gatt.disconnect(); else { setChip('','Bağlı değil'); endSession(); }
+  $('#btnConnect').hidden=false; $('#btnDisconnect').hidden=true;
+  releaseWake();
+}
+
+/* ---------- paket ayrıştırma ---------- */
+let buf=[];
+function onNotify(e){
+  const dv=e.target.value;
+  for(let i=0;i<dv.byteLength;i++) buf.push(dv.getUint8(i));
+  if(buf.length>600) buf=buf.slice(-300);
+  let i=0;
+  while(i+20<=buf.length){
+    if(buf[i]===0xA7 && buf[i+19]===0x7A && cksum(buf,i)){ handleFrame(buf.slice(i,i+20)); i+=20; }
+    else i++;
+  }
+  buf=buf.slice(i);
+}
+function cksum(b,i){
+  let s=0; for(let k=2;k<18;k++) s+=b[i+k];
+  return (s&0xFF)===b[i+18];
+}
+function handleFrame(f){
+  st.lastFrame=Date.now();
+  logRaw(f);
+  /* Nabız hangi baytta? b[7] mi b[8] mi — cihazlar arasında değişiyor.
+     Sabit kalanı eleyip değişeni otomatik seç. */
+  st.pr7.push(f[7]); st.pr8.push(f[8]);
+  if(st.pr7.length>40){ st.pr7.shift(); st.pr8.shift(); }
+  if(st.pr7.length>=20){
+    const u7=new Set(st.pr7).size, u8=new Set(st.pr8).size;
+    const ok8=st.pr8.every(v=>v>=25&&v<=250), ok7=st.pr7.every(v=>v>=25&&v<=250);
+    let src=st.prSrc;
+    if(u7===1&&u8>=4&&ok8) src=8;
+    else if(u8===1&&u7>=4&&ok7) src=7;
+    else if(ok7&&u7>=2) src=7;
+    if(src!==st.prSrc){ st.prSrc=src; localStorage.setItem('prSrc',src); }
+  }
+  const spo2=f[6], pr=f[st.prSrc===8?8:7];
+  let pi=((f[12]<<8)|f[13])/100; if(!(pi>0&&pi<=25)) pi=null;
+  if(spo2>=35&&spo2<=100&&pr>=25&&pr<=250) addReading(spo2,pr,pi);
+  else setNoFinger();
+}
+function logRaw(f){
+  const hex=[...f].map(b=>b.toString(16).padStart(2,'0')).join(' ').toUpperCase();
+  st.raw.push(hex); if(st.raw.length>18) st.raw.shift();
+  const el=$('#rawlog');
+  if(el.classList.contains('show')){ el.textContent=st.raw.join('\n'); el.scrollTop=el.scrollHeight; }
+}
+
+/* =====================================================================
+   ÖLÇÜM AKIŞI
+===================================================================== */
+function addReading(spo2,pr,pi){
+  const t=Date.now();
+  if(t-st.lastReading<700) return;   // ~1 Hz yeter
+  st.lastReading=t;
+  st.ring.push({t,spo2,pr});
+  while(st.ring.length&&t-st.ring[0].t>35*60000) st.ring.shift();
+  if(st.session){
+    st.session.samples.push([t,spo2,pr,pi==null?'':+pi.toFixed(2)]);
+    st.sessDirty=true;
+  }
+  $('#vSpo2').textContent=spo2;
+  $('#vPr').textContent=pr;
+  $('#vPi').textContent=pi==null?'--':pi.toFixed(1);
+  $('#vCount').textContent=st.session?st.session.samples.length:0;
+  $('#tileSpo2').classList.toggle('low',spo2<=cfg.thr);
+  checkAlarms(spo2,pr);
+  drawLive();
+}
+function setNoFinger(){
+  $('#vSpo2').textContent='--'; $('#vPr').textContent='--'; $('#vPi').textContent='--';
+  st.lowCount=0;
+}
+
+/* ---------- oturum ---------- */
+function startSession(){
+  if(st.session) return;
+  st.session={id:Date.now(),start:Date.now(),end:null,samples:[],alarms:[],device:(st.device&&st.device.name)||'demo'};
+}
+async function endSession(){
+  if(!st.session) return;
+  st.session.end=Date.now();
+  if(st.session.samples.length>10) await idbPut(st.session);
+  st.session=null; st.sessDirty=false;
+  renderSessions();
+}
+setInterval(async()=>{             // periyodik güvenli kayıt
+  if(st.session&&st.sessDirty){ st.sessDirty=false; st.session.end=Date.now(); await idbPut(st.session); }
+},5000);
+setInterval(()=>{                  // "son veri" yaşı
+  const el=$('#vAge');
+  if(!st.lastReading){ el.textContent='—'; return; }
+  const s=Math.round((Date.now()-st.lastReading)/1000);
+  el.textContent=s<2?'şimdi':s+' sn önce';
+},1000);
+
+/* =====================================================================
+   ALARM
+===================================================================== */
+function checkAlarms(spo2,pr){
+  const now=Date.now();
+  if(spo2<=cfg.thr) st.lowCount++; else st.lowCount=0;
+  let prBad=false;
+  if(cfg.prOn&&(pr<cfg.prLow||pr>cfg.prHigh)) prBad=true;
+
+  if(!st.alarm&&(st.lowCount>=4||prBad)){
+    st.alarm=true;
+    document.body.classList.add('alarming');
+    $('#alarmBar').classList.add('show');
+    if(st.session) st.session.alarms.push([now,spo2,pr]);
+    notify(`Düşük değer! SpO₂ ${spo2}% · Nabız ${pr}`);
+  }
+  if(st.alarm){
+    $('#alarmVal').textContent=`SpO₂ ${spo2}%`;
+    if(spo2>cfg.thr+1&&!prBad) st.okCount++; else st.okCount=0;
+    if(st.okCount>=5){ stopAlarm(); }
+  }
+}
+function stopAlarm(){
+  st.alarm=false; st.okCount=0; st.lowCount=0;
+  document.body.classList.remove('alarming');
+  $('#alarmBar').classList.remove('show');
+}
+setInterval(()=>{ if(st.alarm&&Date.now()>st.muteUntil){ siren(); if(navigator.vibrate) navigator.vibrate([400,150,400,150,600]); } },4000);
+$('#btnMute').onclick=()=>{ st.muteUntil=Date.now()+60000; };
+
+/* ---------- ses ---------- */
+function initAudio(){ if(!st.audio){ try{ st.audio=new (window.AudioContext||window.webkitAudioContext)(); }catch(_){} } if(st.audio&&st.audio.state==='suspended') st.audio.resume(); }
+function siren(){
+  if(!st.audio) return;
+  const ctx=st.audio, t0=ctx.currentTime;
+  for(let k=0;k<3;k++){
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.type='square'; o.frequency.value=k%2?660:990;
+    g.gain.setValueAtTime(0.0001,t0+k*0.42);
+    g.gain.exponentialRampToValueAtTime(0.5,t0+k*0.42+0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+k*0.42+0.38);
+    o.connect(g).connect(ctx.destination);
+    o.start(t0+k*0.42); o.stop(t0+k*0.42+0.4);
+  }
+}
+/* ---------- bildirim ---------- */
+function askNotif(){
+  if(!('Notification' in window)) return;
+  if(Notification.permission==='default') Notification.requestPermission().then(updNotifState);
+  updNotifState();
+}
+let lastNotif=0;
+function notify(txt){
+  if(!('Notification' in window)||Notification.permission!=='granted') return;
+  if(Date.now()-lastNotif<30000) return;
+  lastNotif=Date.now();
+  try{ new Notification('OksiTakip UYARI',{body:txt,tag:'oksi',renotify:true}); }catch(_){}
+}
+function updNotifState(){
+  const el=$('#notifState');
+  if(!('Notification' in window)){ el.textContent='Bu tarayıcı bildirimleri desteklemiyor (alarm sesi yine de çalar).'; return; }
+  el.textContent = Notification.permission==='granted' ? 'Bildirim izni verildi ✓'
+    : Notification.permission==='denied' ? 'Bildirim engellenmiş — tarayıcı ayarlarından izin verin. Alarm sesi yine de çalar.'
+    : 'Alarm anında sistem bildirimi gönderebilmek için izin gerekir.';
+}
+
+/* ---------- ekran kilidi ---------- */
+async function acquireWake(){
+  if(!cfg.wake||!('wakeLock' in navigator)) return;
+  try{ st.wakeLock=await navigator.wakeLock.request('screen'); }catch(_){}
+}
+function releaseWake(){ if(st.wakeLock){ st.wakeLock.release().catch(()=>{}); st.wakeLock=null; } }
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&st.connected) acquireWake(); });
+
+/* =====================================================================
+   GRAFİKLER (canvas)
+===================================================================== */
+function setupCanvas(cv){
+  const dpr=window.devicePixelRatio||1;
+  const w=cv.clientWidth||cv.parentElement.clientWidth||300, h=+cv.getAttribute('height');
+  cv.width=w*dpr; cv.height=h*dpr;
+  const c=cv.getContext('2d'); c.setTransform(dpr,0,0,dpr,0,0);
+  return {c,w,h};
+}
+function spark(cv,data,key,color,lo,hi){
+  const {c,w,h}=setupCanvas(cv);
+  c.clearRect(0,0,w,h);
+  if(data.length<2) return;
+  const t0=data[0].t, t1=data[data.length-1].t||1;
+  c.beginPath();
+  data.forEach((p,i)=>{
+    const x=(p.t-t0)/Math.max(t1-t0,1)*(w-2)+1;
+    const y=h-2-(Math.min(Math.max(p[key],lo),hi)-lo)/(hi-lo)*(h-4);
+    i?c.lineTo(x,y):c.moveTo(x,y);
+  });
+  c.strokeStyle=color; c.lineWidth=2; c.lineJoin='round'; c.stroke();
+}
+function axisChart(cv,samples,idx,color,yLo,yHi,thr,alarms){
+  const {c,w,h}=setupCanvas(cv);
+  c.clearRect(0,0,w,h);
+  const padL=30,padB=16,padT=6;
+  const iw=w-padL-4, ih=h-padT-padB;
+  if(samples.length<2){ c.fillStyle='#5A6E7C'; c.font='12px sans-serif'; c.fillText('Veri yok',padL,h/2); return; }
+  const t0=samples[0][0], t1=samples[samples.length-1][0];
+  const X=t=>padL+(t-t0)/Math.max(t1-t0,1)*iw;
+  const Y=v=>padT+ih-(Math.min(Math.max(v,yLo),yHi)-yLo)/(yHi-yLo)*ih;
+  /* ızgara */
+  c.strokeStyle='#1C2733'; c.fillStyle='#5A6E7C'; c.font='10px "SF Mono",Menlo,monospace'; c.lineWidth=1;
+  const steps=4;
+  for(let k=0;k<=steps;k++){
+    const v=yLo+(yHi-yLo)*k/steps, y=Y(v);
+    c.beginPath(); c.moveTo(padL,y); c.lineTo(w-2,y); c.stroke();
+    c.fillText(Math.round(v),4,y+3);
+  }
+  /* zaman etiketleri */
+  c.textAlign='center';
+  [t0,(t0+t1)/2,t1].forEach(t=>c.fillText(hhmm(t),X(t),h-3));
+  c.textAlign='left';
+  /* eşik çizgisi */
+  if(thr!=null){
+    c.strokeStyle='rgba(255,90,90,.55)'; c.setLineDash([5,4]);
+    c.beginPath(); c.moveTo(padL,Y(thr)); c.lineTo(w-2,Y(thr)); c.stroke(); c.setLineDash([]);
+  }
+  /* min-max bandı (kova bazlı — kısa düşüşler kaybolmasın) */
+  const buckets=Math.min(iw,240), mins=new Array(buckets), maxs=new Array(buckets);
+  samples.forEach(s=>{
+    const b=Math.min(buckets-1,Math.floor((s[0]-t0)/Math.max(t1-t0,1)*buckets));
+    const v=s[idx]; if(v==null||v==='') return;
+    mins[b]=mins[b]==null?v:Math.min(mins[b],v);
+    maxs[b]=maxs[b]==null?v:Math.max(maxs[b],v);
+  });
+  const bx=b=>padL+(b+0.5)/buckets*iw;
+  c.beginPath(); let started=false;
+  for(let b=0;b<buckets;b++){ if(maxs[b]==null) continue; const x=bx(b),y=Y(maxs[b]); started?c.lineTo(x,y):c.moveTo(x,y); started=true; }
+  for(let b=buckets-1;b>=0;b--){ if(mins[b]==null) continue; c.lineTo(bx(b),Y(mins[b])); }
+  c.closePath(); c.fillStyle=color+'33'; c.fill();
+  /* orta çizgi */
+  c.beginPath(); started=false;
+  for(let b=0;b<buckets;b++){
+    if(mins[b]==null) continue;
+    const x=bx(b), y=Y((mins[b]+maxs[b])/2);
+    started?c.lineTo(x,y):c.moveTo(x,y); started=true;
+  }
+  c.strokeStyle=color; c.lineWidth=2; c.lineJoin='round'; c.stroke();
+  /* alarm noktaları */
+  if(alarms&&alarms.length){
+    c.fillStyle='#FF5A5A';
+    alarms.forEach(a=>{ const x=X(a[0]); c.beginPath(); c.arc(x,Y(Math.max(a[1],yLo)),3.5,0,7); c.fill(); });
+  }
+}
+function drawLive(){
+  const cut=Date.now()-30*60000;
+  const view=st.ring.filter(p=>p.t>=cut);
+  spark($('#sparkSpo2'),view,'spo2','#E4E96B',80,100);
+  spark($('#sparkPr'),view,'pr','#6BCB77',40,140);
+  const s=view.map(p=>[p.t,p.spo2,p.pr,'']);
+  axisChart($('#liveChart'),s,1,'#E4E96B',80,100,cfg.thr,st.session?st.session.alarms.filter(a=>a[0]>=cut):[]);
+}
+
+/* =====================================================================
+   GEÇMİŞ
+===================================================================== */
+let curSess=null;
+async function renderSessions(){
+  const list=await idbAll();
+  list.sort((a,b)=>b.id-a.id);
+  const el=$('#sessList');
+  if(!list.length){ el.innerHTML='<div class="empty">Henüz kayıt yok.<br>Cihaza bağlandığınızda ölçümler otomatik kaydedilir.</div>'; return; }
+  el.innerHTML='';
+  list.forEach(s=>{
+    const sp=s.samples.map(x=>x[1]);
+    const mn=Math.min(...sp), av=(sp.reduce((a,b)=>a+b,0)/sp.length).toFixed(1);
+    const b=document.createElement('button');
+    b.className='sess';
+    b.innerHTML=`<div class="d">${dstr(s.start)}</div>
+      <div class="s">${durstr((s.end||s.start)-s.start)} · en düşük <b>${mn}%</b> · ort ${av}% ·
+      ${s.alarms.length?`<span class="bad">${s.alarms.length} alarm</span>`:'alarm yok'}</div>`;
+    b.onclick=()=>openSess(s);
+    el.appendChild(b);
+  });
+}
+function openSess(s){
+  curSess=s;
+  $('#histList').style.display='none'; $('#histDetail').style.display='block';
+  $('#detTitle').textContent=dstr(s.start);
+  $('#detSub').textContent=`${durstr((s.end||s.start)-s.start)} · ${s.samples.length} ölçüm · cihaz: ${s.device}`;
+  const sp=s.samples.map(x=>x[1]), pr=s.samples.map(x=>x[2]);
+  const mn=Math.min(...sp);
+  const below=s.samples.filter(x=>x[1]<=cfg.thr).length;
+  $('#detStats').innerHTML=`
+    <div class="stat"><div class="k">En düşük SpO₂</div><div class="v ${mn<=cfg.thr?'bad':''}">${mn}%</div></div>
+    <div class="stat"><div class="k">Ortalama SpO₂</div><div class="v">${(sp.reduce((a,b)=>a+b,0)/sp.length).toFixed(1)}%</div></div>
+    <div class="stat"><div class="k">Eşik altı süre</div><div class="v ${below?'bad':''}">${Math.round(below/60)} dk</div></div>
+    <div class="stat"><div class="k">Nabız aralığı</div><div class="v">${Math.min(...pr)}–${Math.max(...pr)}</div></div>
+    <div class="stat"><div class="k">Ort. nabız</div><div class="v">${Math.round(pr.reduce((a,b)=>a+b,0)/pr.length)}</div></div>
+    <div class="stat"><div class="k">Alarm</div><div class="v ${s.alarms.length?'bad':''}">${s.alarms.length}</div></div>`;
+  requestAnimationFrame(()=>{
+    axisChart($('#detSpo2'),s.samples,1,'#E4E96B',Math.min(80,mn-2),100,cfg.thr,s.alarms);
+    axisChart($('#detPr'),s.samples,2,'#6BCB77',30,Math.max(140,Math.max(...pr)+10),null,null);
+  });
+}
+$('#detBack').onclick=()=>{ $('#histDetail').style.display='none'; $('#histList').style.display='block'; };
+$('#btnDelSess').onclick=async()=>{
+  if(!curSess) return;
+  if(!confirm('Bu oturum kalıcı olarak silinsin mi?')) return;
+  await idbDel(curSess.id); curSess=null;
+  $('#detBack').click(); renderSessions();
+};
+$('#btnCsv').onclick=()=>{
+  if(!curSess) return;
+  let csv='zaman;spo2;nabiz;pi\n';
+  curSess.samples.forEach(s=>{ csv+=new Date(s[0]).toISOString()+';'+s[1]+';'+s[2]+';'+s[3]+'\n'; });
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='oksitakip_'+new Date(curSess.start).toISOString().slice(0,16).replace(/[:T]/g,'-')+'.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  if(navigator.clipboard) navigator.clipboard.writeText(csv).then(()=>{
+    $('#btnCsv').textContent='Panoya da kopyalandı ✓';
+    setTimeout(()=>$('#btnCsv').textContent='CSV indir',2500);
+  }).catch(()=>{});
+};
+
+/* =====================================================================
+   DEMO
+===================================================================== */
+let demoTimer=null, demoForce=0;
+function demo(){
+  if(st.demo){ stopDemo(); return; }
+  initAudio(); askNotif();
+  st.demo=true; st.manual=false;
+  $('#btnDemo').textContent='Demoyu durdur';
+  setChip('on','Demo');
+  startSession(); acquireWake();
+  let spo2=97, pr=72;
+  demoTimer=setInterval(()=>{
+    spo2=Math.max(90,Math.min(99,spo2+(Math.random()*2-1)));
+    pr=Math.max(58,Math.min(95,pr+(Math.random()*4-2)));
+    let s=Math.round(spo2);
+    if(Date.now()<demoForce) s=82;
+    addReading(s,Math.round(pr),+(1+Math.random()*3).toFixed(2));
+  },1000);
+}
+function stopDemo(){
+  clearInterval(demoTimer); st.demo=false;
+  $('#btnDemo').textContent='Demo modu';
+  setChip('','Bağlı değil');
+  stopAlarm(); endSession(); releaseWake();
+}
+$('#btnAlarmTest').onclick=()=>{
+  initAudio();
+  if(!st.demo&&!st.connected){ demo(); }
+  demoForce=Date.now()+12000;
+  if(st.connected) { siren(); if(navigator.vibrate) navigator.vibrate([400,150,400]); }
+};
+
+/* =====================================================================
+   UI bağları
+===================================================================== */
+function setChip(mode,txt){
+  const chip=$('#chip');
+  chip.className='chip '+(mode||'');
+  $('#chipTxt').textContent=txt;
+}
+document.querySelectorAll('nav button').forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('main section').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    $('#'+b.dataset.sec).classList.add('active');
+    if(b.dataset.sec==='secHist') renderSessions();
+    if(b.dataset.sec==='secLive') drawLive();
+  };
+});
+$('#btnConnect').onclick=connect;
+$('#btnDisconnect').onclick=disconnect;
+$('#btnDemo').onclick=demo;
+$('#btnSound').onclick=()=>{ initAudio(); siren(); if(navigator.vibrate) navigator.vibrate([400,150,400]); };
+$('#btnNotif').onclick=askNotif;
+$('#btnWipe').onclick=async()=>{
+  if(!confirm('Tüm kayıtlı oturumlar silinsin mi? Bu işlem geri alınamaz.')) return;
+  const all=await idbAll();
+  for(const s of all) await idbDel(s.id);
+  renderSessions();
+};
+/* ayarlar */
+const thrEl=$('#thr');
+thrEl.value=cfg.thr; $('#thrShow').textContent=cfg.thr; $('#thrCap').textContent='eşik '+cfg.thr+'%';
+thrEl.oninput=()=>{ cfg.thr=+thrEl.value; $('#thrShow').textContent=thrEl.value; $('#thrCap').textContent='eşik '+thrEl.value+'%'; drawLive(); };
+$('#prAlarmOn').checked=cfg.prOn;
+$('#prAlarmOn').onchange=e=>cfg.prOn=e.target.checked;
+$('#prLow').value=cfg.prLow; $('#prLow').onchange=e=>cfg.prLow=+e.target.value;
+$('#prHigh').value=cfg.prHigh; $('#prHigh').onchange=e=>cfg.prHigh=+e.target.value;
+$('#wakeOn').checked=cfg.wake;
+$('#wakeOn').onchange=e=>{ cfg.wake=e.target.checked; e.target.checked?(st.connected&&acquireWake()):releaseWake(); };
+$('#rawOn').onchange=e=>{ $('#rawlog').classList.toggle('show',e.target.checked); if(e.target.checked) $('#rawlog').textContent=st.raw.join('\n')||'(henüz paket yok)'; };
+
+window.addEventListener('resize',()=>{ drawLive(); });
+window.addEventListener('beforeunload',()=>{ if(st.session&&st.session.samples.length>10){ st.session.end=Date.now(); try{ tx('readwrite').put(st.session); }catch(_){} } });
+
+/* ---------- başlangıç ---------- */
+openDB().then(()=>{
+  renderSessions();
+  updNotifState();
+  if(!navigator.bluetooth) $('#compatWarn').classList.add('show');
+  drawLive();
+});
+</script>
+</body>
+</html>
