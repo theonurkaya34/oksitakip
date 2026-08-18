@@ -662,8 +662,15 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
 ===================================================================== */
 function setupCanvas(cv){
   const dpr=window.devicePixelRatio||1;
-  const w=cv.clientWidth||cv.parentElement.clientWidth||300, h=+cv.getAttribute('height');
-  cv.width=w*dpr; cv.height=h*dpr;
+  /* CSS yüksekliğini ilk değerden sabitle — cv.height ataması height
+     niteliğini değiştirdiği için bir sonraki okuma katlanarak büyüyordu */
+  if(!cv.dataset.h) cv.dataset.h=cv.getAttribute('height')||'120';
+  const h=+cv.dataset.h;
+  const w=cv.clientWidth||cv.parentElement.clientWidth||300;
+  cv.style.height=h+'px';
+  const W=Math.round(w*dpr), H=Math.round(h*dpr);
+  if(cv.width!==W) cv.width=W;
+  if(cv.height!==H) cv.height=H;
   const c=cv.getContext('2d'); c.setTransform(dpr,0,0,dpr,0,0);
   return {c,w,h};
 }
