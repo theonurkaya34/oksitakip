@@ -6,6 +6,9 @@
 <meta name="theme-color" content="#0A0E13">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>OksiTakip</title>
 <style>
 /* ================= OksiTakip — gece başucu monitörü ================= */
@@ -196,6 +199,20 @@ h2{font-size:15px;color:var(--muted);font-weight:600;letter-spacing:.08em;text-t
 #rawlog.show{display:block}
 .disclaimer{font-size:12px;color:var(--faint);margin:22px 0;line-height:1.5}
 
+/* ---- geçmiş sekme çubuğu ---- */
+.segbar{display:flex;gap:8px;margin:14px 0 10px}
+.segbar button{flex:1;padding:9px 0;border:1px solid var(--line);border-radius:10px;color:var(--muted);font-weight:600;font-size:14px;background:var(--surface)}
+.segbar button.active{color:#04222A;background:var(--pi);border-color:transparent}
+
+/* ---- paylaşım ---- */
+.codebox{display:flex;gap:8px;align-items:center;margin-top:10px}
+.codebox .code{font-family:var(--num);font-size:23px;font-weight:700;letter-spacing:.18em;background:var(--surface2);border:1px dashed var(--line);border-radius:10px;padding:8px 14px;flex:1;text-align:center;color:var(--pi)}
+.codebox input{flex:1;min-width:0;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-family:var(--num);font-size:20px;letter-spacing:.15em;text-align:center;text-transform:uppercase}
+.share-status{font-size:13px;margin-top:8px;color:var(--muted)}
+.share-status.on{color:var(--ok)}
+.alarmlist{font-size:13px;color:var(--muted);font-family:var(--num);margin:8px 2px 0;line-height:1.7}
+.alarmlist b{color:var(--alert)}
+
 /* ---- alt gezinme ---- */
 nav{
   position:fixed;bottom:0;left:0;right:0;z-index:25;
@@ -250,6 +267,7 @@ nav button.active{color:var(--spo2)}
 
   <div class="meta-row">
     <span class="pill">PI <b id="vPi">--</b>%</span>
+    <span class="pill">Solunum <b id="vRr">--</b>/dk</span>
     <span class="pill">Son veri <b id="vAge">—</b></span>
     <span class="pill">Kayıt <b id="vCount">0</b> ölçüm</span>
   </div>
@@ -283,9 +301,34 @@ nav button.active{color:var(--spo2)}
 <!-- ============ GEÇMİŞ ============ -->
 <section id="secHist">
   <div id="histList">
-    <h2>Kayıtlı oturumlar</h2>
-    <div id="sessList"></div>
+    <div class="segbar">
+      <button id="segDays" class="active">Günlük özet</button>
+      <button id="segSess">Oturumlar</button>
+    </div>
+    <div id="dayList"></div>
+    <div id="sessList" style="display:none"></div>
   </div>
+
+  <div id="dayDetail" style="display:none">
+    <button id="dayBack" style="margin:14px 0 4px;color:var(--pi);font-weight:600;font-size:15px">‹ Günlük özet</button>
+    <div id="dayTitle" style="font-weight:700;font-size:17px;margin-bottom:2px"></div>
+    <div id="daySub" style="color:var(--muted);font-size:13px;margin-bottom:10px"></div>
+    <div class="stats" id="dayStats"></div>
+    <div class="chartcard">
+      <div class="cap"><span class="sw" style="background:var(--spo2)"></span>SpO₂ (%)</div>
+      <canvas id="daySpo2" height="150"></canvas>
+    </div>
+    <div class="chartcard">
+      <div class="cap"><span class="sw" style="background:var(--pr)"></span>Nabız (bpm)</div>
+      <canvas id="dayPr" height="130"></canvas>
+    </div>
+    <div class="chartcard">
+      <div class="cap"><span class="sw" style="background:var(--pi)"></span>Solunum RR (/dk)</div>
+      <canvas id="dayRr" height="110"></canvas>
+    </div>
+    <div class="alarmlist" id="dayAlarms"></div>
+  </div>
+
   <div id="histDetail" style="display:none">
     <button id="detBack">‹ Tüm oturumlar</button>
     <div id="detTitle" style="font-weight:700;font-size:17px;margin-bottom:2px"></div>
@@ -298,6 +341,10 @@ nav button.active{color:var(--spo2)}
     <div class="chartcard">
       <div class="cap"><span class="sw" style="background:var(--pr)"></span>Nabız (bpm)</div>
       <canvas id="detPr" height="150"></canvas>
+    </div>
+    <div class="chartcard" id="detRrCard">
+      <div class="cap"><span class="sw" style="background:var(--pi)"></span>Solunum RR (/dk)</div>
+      <canvas id="detRr" height="110"></canvas>
     </div>
     <div class="btnrow">
       <button class="btn" id="btnCsv">CSV indir</button>
@@ -312,7 +359,7 @@ nav button.active{color:var(--spo2)}
   <div class="set">
     <div class="t">SpO₂ alarm eşiği <span class="thrval"><span id="thrShow">85</span>%</span></div>
     <div class="d">Oksijen doygunluğu bu değere veya altına düşüp ~4 saniye kalırsa sesli alarm çalar, telefon titrer ve bildirim gönderilir.</div>
-    <input type="range" id="thr" min="80" max="94" step="1" value="85">
+    <input type="range" id="thr" min="75" max="94" step="1" value="85">
   </div>
   <div class="set">
     <div class="t">Nabız alarmı <label class="switch"><input type="checkbox" id="prAlarmOn"><i></i></label></div>
@@ -332,6 +379,25 @@ nav button.active{color:var(--spo2)}
     <div class="t">Ses testi</div>
     <div class="d">Alarm sesinin telefonunuzda duyulduğunu kontrol edin (sesi açın, sessiz modu kapatın).</div>
     <button class="linkbtn" id="btnSound">Alarm sesini çal</button>
+  </div>
+
+  <h2>Aile paylaşımı</h2>
+  <div class="set">
+    <div class="t">Canlı yayın (bu telefon kaynak) <label class="switch"><input type="checkbox" id="shareOn"><i></i></label></div>
+    <div class="d">Cihaza bağlı olan bu telefon, ölçümleri şifreleyerek internete yayınlar. Diğer telefonlar aşağıdaki <b>aile kodu</b> ile izler.</div>
+    <div class="codebox"><span class="code" id="roomCode">——————</span><button class="linkbtn" id="btnNewCode" style="padding:10px">Yenile</button></div>
+    <div class="share-status" id="shareStatus"></div>
+  </div>
+  <div class="set">
+    <div class="t">İzleyici modu (başka telefon)</div>
+    <div class="d">Cihaza bağlanan telefondaki <b>aile kodunu</b> girin; canlı değerleri görür, alarm bu telefonda da çalar.</div>
+    <div class="codebox"><input id="viewCode" maxlength="6" placeholder="KOD" autocapitalize="characters" autocomplete="off"><button class="linkbtn" id="btnView" style="padding:10px">İzlemeyi başlat</button></div>
+    <div class="share-status" id="viewStatus"></div>
+  </div>
+  <div class="set">
+    <div class="t">Kapalı telefona bildirim (ntfy) <label class="switch"><input type="checkbox" id="ntfyOn"><i></i></label></div>
+    <div class="d">Alarm anında <b>ntfy</b> uygulaması kurulu tüm telefonlara gerçek push bildirimi gönderilir (uygulama kapalıyken bile çalışır — iPhone dahil).<br><br>
+    Kurulum: Telefona ücretsiz <b>ntfy</b> uygulamasını indirin (App Store / Play Store) → <b>+</b> → konu adı olarak şunu yazın: <b style="font-family:var(--num)" id="ntfyTopic">—</b></div>
   </div>
 
   <h2>Gelişmiş</h2>
@@ -392,6 +458,7 @@ const st = {
   pr7:[], pr8:[],
   wakeLock:null, audio:null,
   raw:[],
+  viewer:false, lastRemote:0, vw:null,
 };
 const cfg = {
   get thr(){ return +(localStorage.getItem('thr')||85) },
@@ -525,8 +592,9 @@ function handleFrame(f){
   }
   const spo2=f[6], pr=f[st.prSrc===8?8:7];
   let pi=((f[12]<<8)|f[13])/100; if(!(pi>0&&pi<=25)) pi=null;
-  if(spo2>=35&&spo2<=100&&pr>=25&&pr<=250) addReading(spo2,pr,pi);
-  else setNoFinger();
+  let rr=((f[10]<<8)|f[11])/10; if(!(rr>=5&&rr<=60)) rr=null;   // solunum /dk (doğrulama: ham panel)
+  if(spo2>=35&&spo2<=100&&pr>=25&&pr<=250) addReading(spo2,pr,pi,rr);
+  else { setNoFinger(); sharePub({t:Date.now(),nf:1}); }
 }
 function logRaw(f){
   const hex=[...f].map(b=>b.toString(16).padStart(2,'0')).join(' ').toUpperCase();
@@ -538,22 +606,24 @@ function logRaw(f){
 /* =====================================================================
    ÖLÇÜM AKIŞI
 ===================================================================== */
-function addReading(spo2,pr,pi){
+function addReading(spo2,pr,pi,rr){
   const t=Date.now();
   if(t-st.lastReading<700) return;   // ~1 Hz yeter
   st.lastReading=t;
   st.ring.push({t,spo2,pr});
   while(st.ring.length&&t-st.ring[0].t>35*60000) st.ring.shift();
   if(st.session){
-    st.session.samples.push([t,spo2,pr,pi==null?'':+pi.toFixed(2)]);
+    st.session.samples.push([t,spo2,pr,pi==null?'':+pi.toFixed(2),rr==null?'':+rr.toFixed(1)]);
     st.sessDirty=true;
   }
   $('#vSpo2').textContent=spo2;
   $('#vPr').textContent=pr;
   $('#vPi').textContent=pi==null?'--':pi.toFixed(1);
+  $('#vRr').textContent=rr==null?'--':Math.round(rr);
   $('#vCount').textContent=st.session?st.session.samples.length:0;
   $('#tileSpo2').classList.toggle('low',spo2<=cfg.thr);
   checkAlarms(spo2,pr);
+  sharePub({t,s:spo2,p:pr,i:pi,r:rr});
   drawLive();
 }
 function setNoFinger(){
@@ -598,6 +668,7 @@ function checkAlarms(spo2,pr){
     $('#alarmBar').classList.add('show');
     if(st.session) st.session.alarms.push([now,spo2,pr]);
     notify(`Düşük değer! SpO₂ ${spo2}% · Nabız ${pr}`);
+    if(!st.viewer) ntfyPush(`SpO₂ ${spo2}%'e düştü (eşik ${cfg.thr}%) · Nabız ${pr}`);
   }
   if(st.alarm){
     $('#alarmVal').textContent=`SpO₂ ${spo2}%`;
@@ -722,18 +793,27 @@ function axisChart(cv,samples,idx,color,yLo,yHi,thr,alarms){
     maxs[b]=maxs[b]==null?v:Math.max(maxs[b],v);
   });
   const bx=b=>padL+(b+0.5)/buckets*iw;
-  c.beginPath(); let started=false;
-  for(let b=0;b<buckets;b++){ if(maxs[b]==null) continue; const x=bx(b),y=Y(maxs[b]); started?c.lineTo(x,y):c.moveTo(x,y); started=true; }
-  for(let b=buckets-1;b>=0;b--){ if(mins[b]==null) continue; c.lineTo(bx(b),Y(mins[b])); }
-  c.closePath(); c.fillStyle=color+'33'; c.fill();
-  /* orta çizgi */
-  c.beginPath(); started=false;
-  for(let b=0;b<buckets;b++){
-    if(mins[b]==null) continue;
-    const x=bx(b), y=Y((mins[b]+maxs[b])/2);
-    started?c.lineTo(x,y):c.moveTo(x,y); started=true;
-  }
-  c.strokeStyle=color; c.lineWidth=2; c.lineJoin='round'; c.stroke();
+  /* veri olmayan aralıklar (izleme yapılmayan saatler) çizgiyle birleştirilmez */
+  let run=[];
+  const flushRun=()=>{
+    if(!run.length) return;
+    if(run.length===1){
+      const b=run[0];
+      c.fillStyle=color; c.beginPath();
+      c.arc(bx(b),Y((mins[b]+maxs[b])/2),2,0,7); c.fill();
+      run=[]; return;
+    }
+    c.beginPath();
+    run.forEach((b,j)=>{ const x=bx(b),y=Y(maxs[b]); j?c.lineTo(x,y):c.moveTo(x,y); });
+    for(let j=run.length-1;j>=0;j--) c.lineTo(bx(run[j]),Y(mins[run[j]]));
+    c.closePath(); c.fillStyle=color+'33'; c.fill();
+    c.beginPath();
+    run.forEach((b,j)=>{ const x=bx(b),y=Y((mins[b]+maxs[b])/2); j?c.lineTo(x,y):c.moveTo(x,y); });
+    c.strokeStyle=color; c.lineWidth=2; c.lineJoin='round'; c.stroke();
+    run=[];
+  };
+  for(let b=0;b<buckets;b++){ if(mins[b]==null) flushRun(); else run.push(b); }
+  flushRun();
   /* alarm noktaları */
   if(alarms&&alarms.length){
     c.fillStyle='#FF5A5A';
@@ -760,15 +840,63 @@ async function renderSessions(){
   if(!list.length){ el.innerHTML='<div class="empty">Henüz kayıt yok.<br>Cihaza bağlandığınızda ölçümler otomatik kaydedilir.</div>'; return; }
   el.innerHTML='';
   list.forEach(s=>{
-    const sp=s.samples.map(x=>x[1]);
-    const mn=Math.min(...sp), av=(sp.reduce((a,b)=>a+b,0)/sp.length).toFixed(1);
+    const a=aggStats(s.samples);
     const b=document.createElement('button');
     b.className='sess';
     b.innerHTML=`<div class="d">${dstr(s.start)}</div>
-      <div class="s">${durstr((s.end||s.start)-s.start)} · en düşük <b>${mn}%</b> · ort ${av}% ·
+      <div class="s">${durstr((s.end||s.start)-s.start)} · en düşük <b>${a.minSp}%</b> · ort ${(a.sumSp/a.n).toFixed(1)}% ·
       ${s.alarms.length?`<span class="bad">${s.alarms.length} alarm</span>`:'alarm yok'}</div>`;
     b.onclick=()=>openSess(s);
     el.appendChild(b);
+  });
+}
+
+/* ---------- günlük görünüm ---------- */
+const dayKeyOf = t => { const d=new Date(t); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); };
+async function renderDays(){
+  const list=await idbAll();
+  const days={};
+  list.forEach(s=>{ const k=dayKeyOf(s.start); (days[k]=days[k]||[]).push(s); });
+  const keys=Object.keys(days).sort().reverse();
+  const el=$('#dayList');
+  if(!keys.length){ el.innerHTML='<div class="empty">Henüz kayıt yok.<br>Cihaza bağlandığınızda ölçümler otomatik kaydedilir.</div>'; return; }
+  el.innerHTML='';
+  keys.forEach(k=>{
+    const ss=days[k].sort((x,y)=>x.id-y.id);
+    let minSp=100,alarms=0,dur=0,cnt=0;
+    ss.forEach(s=>{
+      alarms+=s.alarms.length; dur+=(s.end||s.start)-s.start; cnt+=s.samples.length;
+      for(const x of s.samples) if(x[1]<minSp) minSp=x[1];
+    });
+    const d=new Date(ss[0].start);
+    const b=document.createElement('button');
+    b.className='sess';
+    b.innerHTML=`<div class="d">${d.toLocaleDateString('tr-TR',{weekday:'long',day:'numeric',month:'long'})}</div>
+      <div class="s">${durstr(dur)} izleme · ${ss.length} oturum · en düşük <b>${minSp}%</b> ·
+      ${alarms?`<span class="bad">${alarms} alarm</span>`:'alarm yok'}</div>`;
+    b.onclick=()=>openDay(ss);
+    el.appendChild(b);
+  });
+}
+function openDay(ss){
+  $('#histList').style.display='none'; $('#dayDetail').style.display='block';
+  const samples=[];
+  ss.forEach(s=>{ for(const x of s.samples) samples.push(x); });
+  const alarms=[]; ss.forEach(s=>{ for(const a of s.alarms) alarms.push(a); });
+  samples.sort((a,b)=>a[0]-b[0]); alarms.sort((a,b)=>a[0]-b[0]);
+  const dur=ss.reduce((a,s)=>a+((s.end||s.start)-s.start),0);
+  const d=new Date(ss[0].start);
+  $('#dayTitle').textContent=d.toLocaleDateString('tr-TR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  $('#daySub').textContent=`${durstr(dur)} izleme · ${ss.length} oturum · ${samples.length} ölçüm`;
+  const agg=aggStats(samples);
+  $('#dayStats').innerHTML=statCards(agg,alarms.length);
+  $('#dayAlarms').innerHTML=alarms.length
+    ? 'Alarmlar: '+alarms.map(a=>`<b>${hhmm(a[0])}</b> (SpO₂ ${a[1]}%)`).join(' · ')
+    : '';
+  requestAnimationFrame(()=>{
+    axisChart($('#daySpo2'),samples,1,'#E4E96B',Math.min(80,agg.minSp-2),100,cfg.thr,alarms);
+    axisChart($('#dayPr'),samples,2,'#6BCB77',30,Math.max(140,agg.maxPr+10),null,null);
+    axisChart($('#dayRr'),samples,4,'#54C7DC',5,40,null,null);
   });
 }
 function openSess(s){
@@ -776,22 +904,53 @@ function openSess(s){
   $('#histList').style.display='none'; $('#histDetail').style.display='block';
   $('#detTitle').textContent=dstr(s.start);
   $('#detSub').textContent=`${durstr((s.end||s.start)-s.start)} · ${s.samples.length} ölçüm · cihaz: ${s.device}`;
-  const sp=s.samples.map(x=>x[1]), pr=s.samples.map(x=>x[2]);
-  const mn=Math.min(...sp);
-  const below=s.samples.filter(x=>x[1]<=cfg.thr).length;
-  $('#detStats').innerHTML=`
-    <div class="stat"><div class="k">En düşük SpO₂</div><div class="v ${mn<=cfg.thr?'bad':''}">${mn}%</div></div>
-    <div class="stat"><div class="k">Ortalama SpO₂</div><div class="v">${(sp.reduce((a,b)=>a+b,0)/sp.length).toFixed(1)}%</div></div>
-    <div class="stat"><div class="k">Eşik altı süre</div><div class="v ${below?'bad':''}">${Math.round(below/60)} dk</div></div>
-    <div class="stat"><div class="k">Nabız aralığı</div><div class="v">${Math.min(...pr)}–${Math.max(...pr)}</div></div>
-    <div class="stat"><div class="k">Ort. nabız</div><div class="v">${Math.round(pr.reduce((a,b)=>a+b,0)/pr.length)}</div></div>
-    <div class="stat"><div class="k">Alarm</div><div class="v ${s.alarms.length?'bad':''}">${s.alarms.length}</div></div>`;
+  const agg=aggStats(s.samples);
+  $('#detStats').innerHTML=statCards(agg,s.alarms.length);
   requestAnimationFrame(()=>{
-    axisChart($('#detSpo2'),s.samples,1,'#E4E96B',Math.min(80,mn-2),100,cfg.thr,s.alarms);
-    axisChart($('#detPr'),s.samples,2,'#6BCB77',30,Math.max(140,Math.max(...pr)+10),null,null);
+    axisChart($('#detSpo2'),s.samples,1,'#E4E96B',Math.min(80,agg.minSp-2),100,cfg.thr,s.alarms);
+    axisChart($('#detPr'),s.samples,2,'#6BCB77',30,Math.max(140,agg.maxPr+10),null,null);
+    $('#detRrCard').style.display=agg.rrN?'block':'none';
+    if(agg.rrN) axisChart($('#detRr'),s.samples,4,'#54C7DC',5,40,null,null);
   });
 }
+/* büyük dizilerde spread çağrı limitine takılmamak için döngüyle istatistik */
+function aggStats(samples){
+  let minSp=100,maxSp=0,sumSp=0,minPr=999,maxPr=0,sumPr=0,n=0,below=0,rrSum=0,rrN=0,piSum=0,piN=0;
+  for(const x of samples){
+    const sp=x[1],pr=x[2];
+    if(sp==null) continue;
+    n++; sumSp+=sp; sumPr+=pr;
+    if(sp<minSp)minSp=sp; if(sp>maxSp)maxSp=sp;
+    if(pr<minPr)minPr=pr; if(pr>maxPr)maxPr=pr;
+    if(sp<=cfg.thr) below++;
+    const pi=x[3],rr=x[4];
+    if(pi!==''&&pi!=null){piSum+=+pi;piN++;}
+    if(rr!==''&&rr!=null){rrSum+=+rr;rrN++;}
+  }
+  return {minSp,maxSp,sumSp,minPr,maxPr,sumPr,n:Math.max(n,1),below,rrSum,rrN,piSum,piN};
+}
+function statCards(a,alarmCount){
+  return `
+    <div class="stat"><div class="k">En düşük SpO₂</div><div class="v ${a.minSp<=cfg.thr?'bad':''}">${a.minSp}%</div></div>
+    <div class="stat"><div class="k">Ortalama SpO₂</div><div class="v">${(a.sumSp/a.n).toFixed(1)}%</div></div>
+    <div class="stat"><div class="k">Eşik altı süre</div><div class="v ${a.below?'bad':''}">${Math.round(a.below/60)} dk</div></div>
+    <div class="stat"><div class="k">Nabız aralığı</div><div class="v">${a.minPr}–${a.maxPr}</div></div>
+    <div class="stat"><div class="k">Ort. nabız</div><div class="v">${Math.round(a.sumPr/a.n)}</div></div>
+    <div class="stat"><div class="k">Alarm</div><div class="v ${alarmCount?'bad':''}">${alarmCount}</div></div>
+    <div class="stat"><div class="k">Ort. solunum</div><div class="v">${a.rrN?(a.rrSum/a.rrN).toFixed(1):'—'}</div></div>
+    <div class="stat"><div class="k">Ort. PI</div><div class="v">${a.piN?(a.piSum/a.piN).toFixed(1)+'%':'—'}</div></div>
+    <div class="stat"><div class="k">Ölçüm</div><div class="v">${a.n}</div></div>`;
+}
 $('#detBack').onclick=()=>{ $('#histDetail').style.display='none'; $('#histList').style.display='block'; };
+$('#dayBack').onclick=()=>{ $('#dayDetail').style.display='none'; $('#histList').style.display='block'; };
+$('#segDays').onclick=()=>segSel(true);
+$('#segSess').onclick=()=>segSel(false);
+function segSel(days){
+  $('#segDays').classList.toggle('active',days);
+  $('#segSess').classList.toggle('active',!days);
+  $('#dayList').style.display=days?'block':'none';
+  $('#sessList').style.display=days?'none':'block';
+}
 $('#btnDelSess').onclick=async()=>{
   if(!curSess) return;
   if(!confirm('Bu oturum kalıcı olarak silinsin mi?')) return;
@@ -800,8 +959,8 @@ $('#btnDelSess').onclick=async()=>{
 };
 $('#btnCsv').onclick=()=>{
   if(!curSess) return;
-  let csv='zaman;spo2;nabiz;pi\n';
-  curSess.samples.forEach(s=>{ csv+=new Date(s[0]).toISOString()+';'+s[1]+';'+s[2]+';'+s[3]+'\n'; });
+  let csv='zaman;spo2;nabiz;pi;solunum\n';
+  curSess.samples.forEach(s=>{ csv+=new Date(s[0]).toISOString()+';'+s[1]+';'+s[2]+';'+s[3]+';'+(s[4]==null?'':s[4])+'\n'; });
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
@@ -824,13 +983,14 @@ function demo(){
   $('#btnDemo').textContent='Demoyu durdur';
   setChip('on','Demo');
   startSession(); acquireWake();
-  let spo2=97, pr=72;
+  let spo2=97, pr=72, rr=14;
   demoTimer=setInterval(()=>{
     spo2=Math.max(90,Math.min(99,spo2+(Math.random()*2-1)));
     pr=Math.max(58,Math.min(95,pr+(Math.random()*4-2)));
+    rr=Math.max(10,Math.min(22,rr+(Math.random()*2-1)));
     let s=Math.round(spo2);
     if(Date.now()<demoForce) s=82;
-    addReading(s,Math.round(pr),+(1+Math.random()*3).toFixed(2));
+    addReading(s,Math.round(pr),+(1+Math.random()*3).toFixed(2),+rr.toFixed(1));
   },1000);
 }
 function stopDemo(){
@@ -847,6 +1007,149 @@ $('#btnAlarmTest').onclick=()=>{
 };
 
 /* =====================================================================
+   AİLE PAYLAŞIMI — MQTT (şifreli) + ntfy push
+   Kaynak telefon ölçümleri AES-GCM ile şifreleyip herkese açık bir MQTT
+   sunucusuna yayınlar; yalnızca aile kodunu bilen çözebilir.
+===================================================================== */
+const BROKERS=['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt'];
+const share={cli:null,key:null,topic:null,last:0,mode:null};
+
+function genCode(){ const A='ABCDEFGHJKMNPQRSTUVWXYZ23456789'; const u=new Uint32Array(6); crypto.getRandomValues(u); let s=''; for(let i=0;i<6;i++) s+=A[u[i]%A.length]; return s; }
+function getRoom(){ let r=localStorage.getItem('room'); if(!r){ r=genCode(); localStorage.setItem('room',r); } return r; }
+
+async function aesKey(code){
+  const raw=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('oksitakip|'+code));
+  return crypto.subtle.importKey('raw',raw,'AES-GCM',false,['encrypt','decrypt']);
+}
+const b64=a=>btoa(String.fromCharCode(...new Uint8Array(a)));
+const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function encMsg(key,obj){
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify(obj)));
+  return b64(iv)+'.'+b64(ct);
+}
+async function decMsg(key,msg){
+  const [i,c]=msg.split('.');
+  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(i)},key,unb64(c));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+function loadMqtt(){
+  return new Promise((res,rej)=>{
+    if(window.mqtt) return res();
+    const s=document.createElement('script');
+    s.src='mqtt.min.js';
+    s.onload=res;
+    s.onerror=()=>{
+      const s2=document.createElement('script');
+      s2.src='https://unpkg.com/mqtt@5/dist/mqtt.min.js';
+      s2.onload=res; s2.onerror=()=>rej(new Error('mqtt yok'));
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s);
+  });
+}
+function connBroker(i){
+  if(!share.mode) return;
+  if(i>=BROKERS.length){
+    const el=share.mode==='pub'?$('#shareStatus'):$('#viewStatus');
+    el.textContent='Sunucuya bağlanılamadı — interneti kontrol edip tekrar deneyin.'; el.classList.remove('on');
+    return;
+  }
+  try{ if(share.cli) share.cli.end(true); }catch(_){}
+  const c=window.mqtt.connect(BROKERS[i],{clean:true,connectTimeout:8000,reconnectPeriod:4000,clientId:'oksi_'+Math.random().toString(16).slice(2,10)});
+  share.cli=c;
+  c.on('connect',()=>{
+    if(share.mode==='sub'){ c.subscribe(share.topic); $('#viewStatus').textContent='Bağlandı — veri bekleniyor…'; $('#viewStatus').classList.add('on'); }
+    if(share.mode==='pub'){ $('#shareStatus').textContent='Yayında ✓ İzleyiciler '+getRoom()+' koduyla bağlanabilir.'; $('#shareStatus').classList.add('on'); }
+  });
+  c.on('message',(t,m)=>{ if(share.mode==='sub') onRemote(m.toString()); });
+  c.on('error',()=>{});
+  setTimeout(()=>{ if(share.cli===c&&!c.connected){ try{c.end(true);}catch(_){} connBroker(i+1); } },9000);
+}
+async function startShare(){
+  share.mode='pub';
+  share.key=await aesKey(getRoom());
+  share.topic='oksitakip/'+getRoom()+'/v1';
+  $('#shareStatus').textContent='Bağlanılıyor…';
+  await loadMqtt();
+  connBroker(0);
+}
+function stopShare(){
+  share.mode=null;
+  try{ share.cli&&share.cli.end(true); }catch(_){}
+  share.cli=null;
+  $('#shareStatus').textContent=''; $('#shareStatus').classList.remove('on');
+}
+async function sharePub(obj){
+  if(share.mode!=='pub'||!share.cli||!share.cli.connected) return;
+  const now=Date.now();
+  if(now-share.last<2000) return;   // 2 sn'de bir yeter
+  share.last=now;
+  try{ share.cli.publish(share.topic,await encMsg(share.key,obj),{retain:true}); }catch(_){}
+}
+
+/* ---- izleyici ---- */
+async function startViewer(){
+  const code=($('#viewCode').value||'').trim().toUpperCase();
+  if(code.length<4){ $('#viewStatus').textContent='Kaynak telefondaki 6 haneli aile kodunu girin.'; return; }
+  localStorage.setItem('viewCode',code);
+  initAudio(); askNotif();
+  st.viewer=true; share.mode='sub';
+  share.key=await aesKey(code);
+  share.topic='oksitakip/'+code+'/v1';
+  $('#viewStatus').textContent='Bağlanılıyor…';
+  try{ await loadMqtt(); }catch(e){ $('#viewStatus').textContent='Bağlantı kütüphanesi yüklenemedi (internet gerekli).'; st.viewer=false; share.mode=null; return; }
+  connBroker(0);
+  $('#btnView').textContent='İzlemeyi durdur';
+  setChip('busy','İzleyici');
+  clearInterval(st.vw);
+  st.vw=setInterval(()=>{
+    if(!st.viewer){ clearInterval(st.vw); return; }
+    if(st.lastRemote&&Date.now()-st.lastRemote>30000) setChip('err','İzleyici · veri gelmiyor');
+  },5000);
+}
+function stopViewer(){
+  st.viewer=false; stopShare();
+  clearInterval(st.vw);
+  $('#btnView').textContent='İzlemeyi başlat';
+  $('#viewStatus').textContent=''; $('#viewStatus').classList.remove('on');
+  setChip('','Bağlı değil');
+}
+async function onRemote(msg){
+  let o;
+  try{ o=await decMsg(share.key,msg); }
+  catch(_){ $('#viewStatus').textContent='Veri çözülemedi — kod yanlış olabilir.'; return; }
+  st.lastRemote=Date.now();
+  setChip('on','İzleyici · canlı');
+  $('#viewStatus').textContent='Canlı veri alınıyor ✓'; $('#viewStatus').classList.add('on');
+  if(o.nf||o.s==null){ setNoFinger(); return; }
+  const t=Date.now();
+  st.lastReading=t;
+  st.ring.push({t,spo2:o.s,pr:o.p});
+  while(st.ring.length&&t-st.ring[0].t>35*60000) st.ring.shift();
+  $('#vSpo2').textContent=o.s;
+  $('#vPr').textContent=o.p;
+  $('#vPi').textContent=o.i==null?'--':(+o.i).toFixed(1);
+  $('#vRr').textContent=o.r==null?'--':Math.round(o.r);
+  $('#tileSpo2').classList.toggle('low',o.s<=cfg.thr);
+  checkAlarms(o.s,o.p);
+  drawLive();
+}
+
+/* ---- ntfy: kapalı telefonlara gerçek push ---- */
+let lastNtfy=0;
+function ntfyPush(txt){
+  if(localStorage.getItem('ntfy')!=='1') return;
+  if(Date.now()-lastNtfy<60000) return;
+  lastNtfy=Date.now();
+  fetch('https://ntfy.sh/oksitakip-'+getRoom().toLowerCase(),{
+    method:'POST',body:txt,
+    headers:{'Title':'OksiTakip ALARM','Priority':'urgent','Tags':'rotating_light'}
+  }).catch(()=>{});
+}
+
+/* =====================================================================
    UI bağları
 ===================================================================== */
 function setChip(mode,txt){
@@ -860,7 +1163,7 @@ document.querySelectorAll('nav button').forEach(b=>{
     document.querySelectorAll('main section').forEach(x=>x.classList.remove('active'));
     b.classList.add('active');
     $('#'+b.dataset.sec).classList.add('active');
-    if(b.dataset.sec==='secHist') renderSessions();
+    if(b.dataset.sec==='secHist'){ renderDays(); renderSessions(); }
     if(b.dataset.sec==='secLive') drawLive();
   };
 });
@@ -886,15 +1189,41 @@ $('#prHigh').value=cfg.prHigh; $('#prHigh').onchange=e=>cfg.prHigh=+e.target.val
 $('#wakeOn').checked=cfg.wake;
 $('#wakeOn').onchange=e=>{ cfg.wake=e.target.checked; e.target.checked?(st.connected&&acquireWake()):releaseWake(); };
 $('#rawOn').onchange=e=>{ $('#rawlog').classList.toggle('show',e.target.checked); if(e.target.checked) $('#rawlog').textContent=st.raw.join('\n')||'(henüz paket yok)'; };
+/* paylaşım ayarları */
+function renderRoom(){
+  $('#roomCode').textContent=getRoom();
+  $('#ntfyTopic').textContent='oksitakip-'+getRoom().toLowerCase();
+}
+$('#shareOn').checked=localStorage.getItem('share')==='1';
+$('#shareOn').onchange=async e=>{
+  localStorage.setItem('share',e.target.checked?'1':'0');
+  if(e.target.checked){ try{ await startShare(); }catch(_){ $('#shareStatus').textContent='Başlatılamadı — internet gerekli.'; } }
+  else stopShare();
+};
+$('#btnNewCode').onclick=async()=>{
+  if(!confirm('Yeni kod üretilsin mi? İzleyicilerin ve ntfy abonelerinin yeni kodu girmesi gerekir.')) return;
+  localStorage.setItem('room',genCode());
+  renderRoom();
+  if(share.mode==='pub'){ stopShare(); try{ await startShare(); }catch(_){} }
+};
+$('#viewCode').value=localStorage.getItem('viewCode')||'';
+$('#btnView').onclick=()=>{ st.viewer?stopViewer():startViewer(); };
+$('#ntfyOn').checked=localStorage.getItem('ntfy')==='1';
+$('#ntfyOn').onchange=e=>localStorage.setItem('ntfy',e.target.checked?'1':'0');
 
 window.addEventListener('resize',()=>{ drawLive(); });
 window.addEventListener('beforeunload',()=>{ if(st.session&&st.session.samples.length>10){ st.session.end=Date.now(); try{ tx('readwrite').put(st.session); }catch(_){} } });
 
 /* ---------- başlangıç ---------- */
 openDB().then(()=>{
+  renderDays();
   renderSessions();
   updNotifState();
+  renderRoom();
   if(!navigator.bluetooth) $('#compatWarn').classList.add('show');
+  if(localStorage.getItem('share')==='1') startShare().catch(()=>{});
+  if('serviceWorker' in navigator&&location.protocol==='https:')
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
   drawLive();
 });
 </script>
