@@ -447,8 +447,7 @@ const st = {
   ring:[],            // canlı grafik: son ~35 dk {t,spo2,pr}
   lastReading:0, lastFrame:0,
   lowCount:0, okCount:0, alarm:false, muteUntil:0,
-  prSrc:+(localStorage.getItem('prSrc')||7),
-  pr7:[], pr8:[],
+  spBuf:[], prBuf:[],
   wakeLock:null, audio:null,
   raw:[],
   viewer:false, lastRemote:0, vw:null,
@@ -568,27 +567,24 @@ function cksum(b,i){
   let s=0; for(let k=2;k<18;k++) s+=b[i+k];
   return (s&0xFF)===b[i+18];
 }
+const median=a=>{ const s=[...a].sort((x,y)=>x-y); return s[Math.floor(s.length/2)]; };
 function handleFrame(f){
   st.lastFrame=Date.now();
   logRaw(f);
-  /* Nabız hangi baytta? b[7] mi b[8] mi — cihazlar arasında değişiyor.
-     Sabit kalanı eleyip değişeni otomatik seç. */
-  st.pr7.push(f[7]); st.pr8.push(f[8]);
-  if(st.pr7.length>40){ st.pr7.shift(); st.pr8.shift(); }
-  if(st.pr7.length>=20){
-    const u7=new Set(st.pr7).size, u8=new Set(st.pr8).size;
-    const ok8=st.pr8.every(v=>v>=25&&v<=250), ok7=st.pr7.every(v=>v>=25&&v<=250);
-    let src=st.prSrc;
-    if(u7===1&&u8>=4&&ok8) src=8;
-    else if(u8===1&&u7>=4&&ok7) src=7;
-    else if(ok7&&u7>=2) src=7;
-    if(src!==st.prSrc){ st.prSrc=src; localStorage.setItem('prSrc',src); }
-  }
-  const spo2=f[6], pr=f[st.prSrc===8?8:7];
+  /* SpO2 = bayt6, nabız = bayt7 (bayt8 nabız dalga şiddeti — nabız DEĞİL).
+     Cihaz gibi davran: tekil hatalı okumaları ekrana yansıtma —
+     son değerlerin medyanı alınır, ani sıçramalar böylece elenir. */
+  const spo2=f[6], pr=f[7];
   let pi=((f[12]<<8)|f[13])/100; if(!(pi>0&&pi<=25)) pi=null;
   let rr=((f[10]<<8)|f[11])/10; if(!(rr>=5&&rr<=60)) rr=null;   // solunum /dk (doğrulama: ham panel)
-  if(spo2>=35&&spo2<=100&&pr>=25&&pr<=250) addReading(spo2,pr,pi,rr);
-  else { setNoFinger(); sharePub({t:Date.now(),nf:1}); }
+  if(spo2>=35&&spo2<=100&&pr>=30&&pr<=240){
+    st.spBuf.push(spo2); if(st.spBuf.length>3) st.spBuf.shift();
+    st.prBuf.push(pr);   if(st.prBuf.length>5) st.prBuf.shift();
+    addReading(median(st.spBuf),median(st.prBuf),pi,rr);
+  }else{
+    st.spBuf.length=0; st.prBuf.length=0;
+    setNoFinger(); sharePub({t:Date.now(),nf:1});
+  }
 }
 function logRaw(f){
   const hex=[...f].map(b=>b.toString(16).padStart(2,'0')).join(' ').toUpperCase();
