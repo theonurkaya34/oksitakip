@@ -286,6 +286,8 @@ nav button.active{color:var(--spo2)}
     <button class="btn ghost" id="btnAlarmTest">Alarmı test et</button>
   </div>
 
+  <div class="warn" id="bleErr"></div>
+
   <div class="warn" id="compatWarn">
     <b>Bu tarayıcı Bluetooth'u desteklemiyor.</b>
     <ol>
@@ -489,22 +491,45 @@ const durstr = ms => { const m=Math.round(ms/60000); return m<60? m+' dk' : Math
 /* =====================================================================
    BLE
 ===================================================================== */
+const isCancel=e=>/cancel/i.test(String(e));
+function showBleError(e){
+  const el=$('#bleErr');
+  el.innerHTML='<b>Bağlantı hatası:</b> <span style="font-family:var(--num);font-size:12px">'+String(e).slice(0,180)+'</span>'+
+    '<ol>'+
+    '<li>Oksimetre <b>parmağınızda ve açık</b> olmalı (cihaz ~8 sn boşta kalınca kendini kapatır — bağlanırken parmakta tutun).</li>'+
+    '<li><b>iPhone:</b> Ayarlar → Gizlilik ve Güvenlik → Bluetooth → <b>Bluefy</b> izni AÇIK olmalı. Listede yoksa Bluefy\'yi kapatıp açın, ilk soruda İzin Ver deyin.</li>'+
+    '<li>Sayfayı yenileyip tekrar deneyin. Olmuyorsa bu kutunun ekran görüntüsünü paylaşın.</li></ol>';
+  el.classList.add('show');
+}
 async function connect(){
   if(!navigator.bluetooth){ $('#compatWarn').classList.add('show'); return; }
   askNotif(); initAudio();
+  $('#bleErr').classList.remove('show');
+  let dev=null;
+  setChip('busy','Cihaz seçiliyor…');
   try{
-    setChip('busy','Cihaz seçiliyor…');
-    st.device = await navigator.bluetooth.requestDevice({
+    dev = await navigator.bluetooth.requestDevice({
       filters:[{namePrefix:'OXIMETER'},{namePrefix:'Oximeter'},{services:[SERVICE]}],
       optionalServices:[SERVICE,0x180F,0x180A]
     });
-    st.device.addEventListener('gattserverdisconnected', onDisconnect);
-    st.manual=false;
-    await gattConnect();
   }catch(e){
-    if(String(e).includes('cancel')){ setChip('','Bağlı değil'); return; }
-    setChip('err','Bağlanamadı'); console.error(e);
+    if(isCancel(e)){ setChip('','Bağlı değil'); return; }
+    /* filtreli arama bu tarayıcıda çalışmadı — tüm cihazları listele */
+    try{
+      dev = await navigator.bluetooth.requestDevice({
+        acceptAllDevices:true,
+        optionalServices:[SERVICE,0x180F,0x180A]
+      });
+    }catch(e2){
+      if(isCancel(e2)){ setChip('','Bağlı değil'); return; }
+      setChip('err','Bağlanamadı'); showBleError(e2); return;
+    }
   }
+  st.device=dev;
+  st.device.addEventListener('gattserverdisconnected', onDisconnect);
+  st.manual=false;
+  try{ await gattConnect(); }
+  catch(e){ setChip('err','Bağlanamadı'); showBleError(e); console.error(e); }
 }
 async function gattConnect(){
   setChip('busy','Bağlanıyor…');
