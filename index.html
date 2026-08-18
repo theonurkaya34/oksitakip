@@ -242,7 +242,7 @@ nav button.active{color:var(--spo2)}
 </div>
 
 <header>
-  <div class="brand">OksiTakip<small>YK-80B oksijen &amp; nabız · v2.5</small></div>
+  <div class="brand">OksiTakip<small>YK-80B oksijen &amp; nabız · v2.6</small></div>
   <div class="spacer"></div>
   <span id="batt" hidden>🔋 <b>—</b>%</span>
   <span class="chip" id="chip"><span class="dot"></span><span id="chipTxt">Bağlı değil</span></span>
@@ -512,24 +512,24 @@ async function connect(){
   $('#bleErr').classList.remove('show');
   let dev=null;
   setChip('busy','Cihaz seçiliyor…');
-  try{
-    dev = await navigator.bluetooth.requestDevice({
-      filters:[{namePrefix:'OXIMETER'},{namePrefix:'Oximeter'},{services:[SERVICE]}],
-      optionalServices:[SERVICE,SVC_BATT,SVC_DEVINFO]
-    });
-  }catch(e){
-    if(isCancel(e)){ setChip('','Bağlı değil'); return; }
-    /* filtreli arama bu tarayıcıda çalışmadı — tüm cihazları listele */
-    try{
-      dev = await navigator.bluetooth.requestDevice({
-        acceptAllDevices:true,
-        optionalServices:[SERVICE,SVC_BATT,SVC_DEVINFO]
-      });
-    }catch(e2){
-      if(isCancel(e2)){ setChip('','Bağlı değil'); return; }
-      setChip('err','Bağlanamadı'); showBleError(e2); return;
+  /* Tarayıcılar (özellikle iOS/Bluefy) istek biçimlerine farklı tepki veriyor —
+     kabul edilene kadar basitleşen biçimleri sırayla dene */
+  const tries=[
+    {filters:[{namePrefix:'OXIMETER'},{namePrefix:'Oximeter'},{services:[SERVICE]}],optionalServices:[SERVICE,SVC_BATT,SVC_DEVINFO]},
+    {filters:[{services:[0xffe0]}],optionalServices:[0xffe0,0x180f,0x180a]},
+    {filters:[{namePrefix:'OXIMETER'}],optionalServices:[0xffe0]},
+    {acceptAllDevices:true,optionalServices:[0xffe0]},
+    {acceptAllDevices:true}
+  ];
+  let lastErr=null;
+  for(const opt of tries){
+    try{ dev=await navigator.bluetooth.requestDevice(opt); break; }
+    catch(e){
+      if(isCancel(e)){ setChip('','Bağlı değil'); return; }
+      lastErr=e;
     }
   }
+  if(!dev){ setChip('err','Bağlanamadı'); showBleError(lastErr); return; }
   st.device=dev;
   st.device.addEventListener('gattserverdisconnected', onDisconnect);
   st.manual=false;
@@ -539,8 +539,13 @@ async function connect(){
 async function gattConnect(){
   setChip('busy','Bağlanıyor…');
   const server = await st.device.gatt.connect();
-  const svc = await server.getPrimaryService(SERVICE);
-  st.char = await svc.getCharacteristic(CHAR_NOTIFY);
+  /* servis/karakteristik adreslerini iki biçimde de dene (metin ve sayı) */
+  let svc=null;
+  for(const id of [SERVICE,0xffe0]){ try{ svc=await server.getPrimaryService(id); break; }catch(_){} }
+  if(!svc) throw new Error('Oksimetre veri servisi (FFE0) bulunamadı — listeden OXIMETER-BLE cihazını seçtiğinizden emin olun.');
+  st.char=null;
+  for(const id of [CHAR_NOTIFY,0xffe2]){ try{ st.char=await svc.getCharacteristic(id); break; }catch(_){} }
+  if(!st.char) throw new Error('Veri kanalı (FFE2) bulunamadı.');
   await st.char.startNotifications();
   st.char.addEventListener('characteristicvaluechanged', onNotify);
   st.connected=true;
