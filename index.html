@@ -242,7 +242,7 @@ nav button.active{color:var(--spo2)}
 </div>
 
 <header>
-  <div class="brand">OksiTakip<small>YK-80B oksijen &amp; nabız</small></div>
+  <div class="brand">OksiTakip<small>YK-80B oksijen &amp; nabız · v2.5</small></div>
   <div class="spacer"></div>
   <span id="batt" hidden>🔋 <b>—</b>%</span>
   <span class="chip" id="chip"><span class="dot"></span><span id="chipTxt">Bağlı değil</span></span>
@@ -440,7 +440,12 @@ nav button.active{color:var(--spo2)}
    Paket: 20 bayt, A7 .. 7A ; sağlama = bayt[2..17] toplamının son baytı.
    ===================================================================== */
 const $ = s => document.querySelector(s);
-const SERVICE = 0xFFE0, CHAR_NOTIFY = 0xFFE2;
+/* Bazı tarayıcılar (özellikle iOS/Bluefy) kısa UUID'lere hassas — tam biçim kullan */
+const SERVICE     = '0000ffe0-0000-1000-8000-00805f9b34fb';
+const CHAR_NOTIFY = '0000ffe2-0000-1000-8000-00805f9b34fb';
+const SVC_BATT    = '0000180f-0000-1000-8000-00805f9b34fb';
+const CHR_BATT    = '00002a19-0000-1000-8000-00805f9b34fb';
+const SVC_DEVINFO = '0000180a-0000-1000-8000-00805f9b34fb';
 
 /* ---------- durum ---------- */
 const st = {
@@ -510,7 +515,7 @@ async function connect(){
   try{
     dev = await navigator.bluetooth.requestDevice({
       filters:[{namePrefix:'OXIMETER'},{namePrefix:'Oximeter'},{services:[SERVICE]}],
-      optionalServices:[SERVICE,0x180F,0x180A]
+      optionalServices:[SERVICE,SVC_BATT,SVC_DEVINFO]
     });
   }catch(e){
     if(isCancel(e)){ setChip('','Bağlı değil'); return; }
@@ -518,7 +523,7 @@ async function connect(){
     try{
       dev = await navigator.bluetooth.requestDevice({
         acceptAllDevices:true,
-        optionalServices:[SERVICE,0x180F,0x180A]
+        optionalServices:[SERVICE,SVC_BATT,SVC_DEVINFO]
       });
     }catch(e2){
       if(isCancel(e2)){ setChip('','Bağlı değil'); return; }
@@ -548,8 +553,8 @@ async function gattConnect(){
   readBattery(server).catch(()=>{});
 }
 async function readBattery(server){
-  const s = await server.getPrimaryService(0x180F);
-  const c = await s.getCharacteristic(0x2A19);
+  const s = await server.getPrimaryService(SVC_BATT);
+  const c = await s.getCharacteristic(CHR_BATT);
   const render = v => { $('#batt').hidden=false; $('#batt').querySelector('b').textContent=v; };
   render((await c.readValue()).getUint8(0));
   try{ await c.startNotifications(); c.addEventListener('characteristicvaluechanged',e=>render(e.target.value.getUint8(0))); }catch(_){}
