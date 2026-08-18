@@ -383,16 +383,9 @@ nav button.active{color:var(--spo2)}
 
   <h2>Aile paylaşımı</h2>
   <div class="set">
-    <div class="t">Canlı yayın (bu telefon kaynak) <label class="switch"><input type="checkbox" id="shareOn"><i></i></label></div>
-    <div class="d">Cihaza bağlı olan bu telefon, ölçümleri şifreleyerek internete yayınlar. Diğer telefonlar aşağıdaki <b>aile kodu</b> ile izler.</div>
-    <div class="codebox"><span class="code" id="roomCode">——————</span><button class="linkbtn" id="btnNewCode" style="padding:10px">Yenile</button></div>
+    <div class="t">Otomatik paylaşım</div>
+    <div class="d">Bu adresi açan her telefon <b>otomatik izleyicidir</b>: hangi telefon cihaza bağlanırsa o telefon yayıncı olur, diğerleri canlı ekranı kendiliğinden görür ve alarmlar onlarda da çalar. Kod veya ayar gerekmez. Yayın şifrelidir; bu adresi bilmeyen kimse veriyi çözemez.</div>
     <div class="share-status" id="shareStatus"></div>
-  </div>
-  <div class="set">
-    <div class="t">İzleyici modu (başka telefon)</div>
-    <div class="d">Cihaza bağlanan telefondaki <b>aile kodunu</b> girin; canlı değerleri görür, alarm bu telefonda da çalar.</div>
-    <div class="codebox"><input id="viewCode" maxlength="6" placeholder="KOD" autocapitalize="characters" autocomplete="off"><button class="linkbtn" id="btnView" style="padding:10px">İzlemeyi başlat</button></div>
-    <div class="share-status" id="viewStatus"></div>
   </div>
   <div class="set">
     <div class="t">Kapalı telefona bildirim (ntfy) <label class="switch"><input type="checkbox" id="ntfyOn"><i></i></label></div>
@@ -526,6 +519,7 @@ async function gattConnect(){
   $('#btnConnect').hidden=true; $('#btnDisconnect').hidden=false;
   startSession();
   acquireWake();
+  autoShare();
   readBattery(server).catch(()=>{});
 }
 async function readBattery(server){
@@ -637,6 +631,7 @@ function startSession(){
   st.session={id:Date.now(),start:Date.now(),end:null,samples:[],alarms:[],device:(st.device&&st.device.name)||'demo'};
 }
 async function endSession(){
+  autoShare();
   if(!st.session) return;
   st.session.end=Date.now();
   if(st.session.samples.length>10) await idbPut(st.session);
@@ -982,7 +977,7 @@ function demo(){
   st.demo=true; st.manual=false;
   $('#btnDemo').textContent='Demoyu durdur';
   setChip('on','Demo');
-  startSession(); acquireWake();
+  startSession(); acquireWake(); autoShare();
   let spo2=97, pr=72, rr=14;
   demoTimer=setInterval(()=>{
     spo2=Math.max(90,Math.min(99,spo2+(Math.random()*2-1)));
@@ -1014,8 +1009,13 @@ $('#btnAlarmTest').onclick=()=>{
 const BROKERS=['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt'];
 const share={cli:null,key:null,topic:null,last:0,mode:null};
 
-function genCode(){ const A='ABCDEFGHJKMNPQRSTUVWXYZ23456789'; const u=new Uint32Array(6); crypto.getRandomValues(u); let s=''; for(let i=0;i<6;i++) s+=A[u[i]%A.length]; return s; }
-function getRoom(){ let r=localStorage.getItem('room'); if(!r){ r=genCode(); localStorage.setItem('room',r); } return r; }
+/* Oda adı site adresinden türetilir — aynı adresi açan herkes aynı odada,
+   kod girmek gerekmez. */
+function getRoom(){
+  const host=(location.hostname||'yerel').split('.')[0];
+  const path=(location.pathname||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,24);
+  return (host+'-'+path).toUpperCase();
+}
 
 async function aesKey(code){
   const raw=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('oksitakip|'+code));
@@ -1052,16 +1052,16 @@ function loadMqtt(){
 function connBroker(i){
   if(!share.mode) return;
   if(i>=BROKERS.length){
-    const el=share.mode==='pub'?$('#shareStatus'):$('#viewStatus');
-    el.textContent='Sunucuya bağlanılamadı — interneti kontrol edip tekrar deneyin.'; el.classList.remove('on');
+    $('#shareStatus').textContent='Paylaşım sunucusuna bağlanılamadı — internet bağlantısını kontrol edin.';
+    $('#shareStatus').classList.remove('on');
     return;
   }
   try{ if(share.cli) share.cli.end(true); }catch(_){}
   const c=window.mqtt.connect(BROKERS[i],{clean:true,connectTimeout:8000,reconnectPeriod:4000,clientId:'oksi_'+Math.random().toString(16).slice(2,10)});
   share.cli=c;
   c.on('connect',()=>{
-    if(share.mode==='sub'){ c.subscribe(share.topic); $('#viewStatus').textContent='Bağlandı — veri bekleniyor…'; $('#viewStatus').classList.add('on'); }
-    if(share.mode==='pub'){ $('#shareStatus').textContent='Yayında ✓ İzleyiciler '+getRoom()+' koduyla bağlanabilir.'; $('#shareStatus').classList.add('on'); }
+    if(share.mode==='sub'){ c.subscribe(share.topic); $('#shareStatus').textContent='İzleme hazır — bir telefon cihaza bağlanınca canlı ekran burada görünür.'; $('#shareStatus').classList.add('on'); }
+    if(share.mode==='pub'){ $('#shareStatus').textContent='Yayında ✓ Bu adresi açan diğer telefonlar canlı görüyor.'; $('#shareStatus').classList.add('on'); }
   });
   c.on('message',(t,m)=>{ if(share.mode==='sub') onRemote(m.toString()); });
   c.on('error',()=>{});
@@ -1089,40 +1089,47 @@ async function sharePub(obj){
   try{ share.cli.publish(share.topic,await encMsg(share.key,obj),{retain:true}); }catch(_){}
 }
 
-/* ---- izleyici ---- */
+/* ---- izleyici (otomatik) ---- */
 async function startViewer(){
-  const code=($('#viewCode').value||'').trim().toUpperCase();
-  if(code.length<4){ $('#viewStatus').textContent='Kaynak telefondaki 6 haneli aile kodunu girin.'; return; }
-  localStorage.setItem('viewCode',code);
-  initAudio(); askNotif();
+  if(st.viewer) return;
   st.viewer=true; share.mode='sub';
-  share.key=await aesKey(code);
-  share.topic='oksitakip/'+code+'/v1';
-  $('#viewStatus').textContent='Bağlanılıyor…';
-  try{ await loadMqtt(); }catch(e){ $('#viewStatus').textContent='Bağlantı kütüphanesi yüklenemedi (internet gerekli).'; st.viewer=false; share.mode=null; return; }
+  share.key=await aesKey(getRoom());
+  share.topic='oksitakip/'+getRoom()+'/v1';
+  try{ await loadMqtt(); }catch(e){ st.viewer=false; share.mode=null; return; }
+  if(!st.viewer) return;
   connBroker(0);
-  $('#btnView').textContent='İzlemeyi durdur';
-  setChip('busy','İzleyici');
   clearInterval(st.vw);
   st.vw=setInterval(()=>{
     if(!st.viewer){ clearInterval(st.vw); return; }
-    if(st.lastRemote&&Date.now()-st.lastRemote>30000) setChip('err','İzleyici · veri gelmiyor');
+    if(st.lastRemote&&Date.now()-st.lastRemote>30000){
+      st.lastRemote=0; setNoFinger();
+      setChip('','Yayın bekleniyor');
+    }
   },5000);
 }
 function stopViewer(){
-  st.viewer=false; stopShare();
+  if(!st.viewer) return;
+  st.viewer=false;
+  if(share.mode==='sub') stopShare();
   clearInterval(st.vw);
-  $('#btnView').textContent='İzlemeyi başlat';
-  $('#viewStatus').textContent=''; $('#viewStatus').classList.remove('on');
-  setChip('','Bağlı değil');
+}
+/* cihaz bağlıysa yayıncı, değilse izleyici ol */
+async function autoShare(){
+  const remoteFresh=st.lastRemote&&Date.now()-st.lastRemote<15000;
+  if(st.connected||(st.demo&&!remoteFresh)){
+    stopViewer();
+    if(share.mode!=='pub'){ try{ await startShare(); }catch(_){} }
+  }else{
+    if(share.mode==='pub') stopShare();
+    startViewer();
+  }
 }
 async function onRemote(msg){
   let o;
   try{ o=await decMsg(share.key,msg); }
-  catch(_){ $('#viewStatus').textContent='Veri çözülemedi — kod yanlış olabilir.'; return; }
+  catch(_){ return; }
   st.lastRemote=Date.now();
-  setChip('on','İzleyici · canlı');
-  $('#viewStatus').textContent='Canlı veri alınıyor ✓'; $('#viewStatus').classList.add('on');
+  setChip('on','Canlı izleme');
   if(o.nf||o.s==null){ setNoFinger(); return; }
   const t=Date.now();
   st.lastReading=t;
@@ -1191,25 +1198,12 @@ $('#wakeOn').onchange=e=>{ cfg.wake=e.target.checked; e.target.checked?(st.conne
 $('#rawOn').onchange=e=>{ $('#rawlog').classList.toggle('show',e.target.checked); if(e.target.checked) $('#rawlog').textContent=st.raw.join('\n')||'(henüz paket yok)'; };
 /* paylaşım ayarları */
 function renderRoom(){
-  $('#roomCode').textContent=getRoom();
   $('#ntfyTopic').textContent='oksitakip-'+getRoom().toLowerCase();
 }
-$('#shareOn').checked=localStorage.getItem('share')==='1';
-$('#shareOn').onchange=async e=>{
-  localStorage.setItem('share',e.target.checked?'1':'0');
-  if(e.target.checked){ try{ await startShare(); }catch(_){ $('#shareStatus').textContent='Başlatılamadı — internet gerekli.'; } }
-  else stopShare();
-};
-$('#btnNewCode').onclick=async()=>{
-  if(!confirm('Yeni kod üretilsin mi? İzleyicilerin ve ntfy abonelerinin yeni kodu girmesi gerekir.')) return;
-  localStorage.setItem('room',genCode());
-  renderRoom();
-  if(share.mode==='pub'){ stopShare(); try{ await startShare(); }catch(_){} }
-};
-$('#viewCode').value=localStorage.getItem('viewCode')||'';
-$('#btnView').onclick=()=>{ st.viewer?stopViewer():startViewer(); };
 $('#ntfyOn').checked=localStorage.getItem('ntfy')==='1';
 $('#ntfyOn').onchange=e=>localStorage.setItem('ntfy',e.target.checked?'1':'0');
+/* izleyicide alarm sesi çalabilsin diye ilk dokunuşta ses sistemini hazırla */
+document.addEventListener('pointerdown',()=>initAudio(),{once:true});
 
 window.addEventListener('resize',()=>{ drawLive(); });
 window.addEventListener('beforeunload',()=>{ if(st.session&&st.session.samples.length>10){ st.session.end=Date.now(); try{ tx('readwrite').put(st.session); }catch(_){} } });
@@ -1221,7 +1215,7 @@ openDB().then(()=>{
   updNotifState();
   renderRoom();
   if(!navigator.bluetooth) $('#compatWarn').classList.add('show');
-  if(localStorage.getItem('share')==='1') startShare().catch(()=>{});
+  autoShare();
   if('serviceWorker' in navigator&&location.protocol==='https:')
     navigator.serviceWorker.register('sw.js').catch(()=>{});
   drawLive();
