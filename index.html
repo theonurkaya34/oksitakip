@@ -516,6 +516,7 @@ async function gattConnect(){
   st.connected=true;
   setChip('on', st.device.name||'Bağlı');
   $('#btnConnect').hidden=true; $('#btnDisconnect').hidden=false;
+  if(st.session&&st.session.device==='izleme') await endSession();
   startSession();
   acquireWake();
   autoShare();
@@ -846,39 +847,53 @@ async function renderSessions(){
 const dayKeyOf = t => { const d=new Date(t); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); };
 async function renderDays(){
   const list=await idbAll();
+  const rem=remoteDays();
   const days={};
-  list.forEach(s=>{ const k=dayKeyOf(s.start); (days[k]=days[k]||[]).push(s); });
+  list.forEach(s=>{ const k=dayKeyOf(s.start); (days[k]=days[k]||{ss:[],rem:null}).ss.push(s); });
+  Object.entries(rem).forEach(([d,o])=>{ (days[d]=days[d]||{ss:[],rem:null}).rem=o; });
   const keys=Object.keys(days).sort().reverse();
   const el=$('#dayList');
   if(!keys.length){ el.innerHTML='<div class="empty">Henüz kayıt yok.<br>Cihaza bağlandığınızda ölçümler otomatik kaydedilir.</div>'; return; }
   el.innerHTML='';
   keys.forEach(k=>{
-    const ss=days[k].sort((x,y)=>x.id-y.id);
-    let minSp=100,alarms=0,dur=0,cnt=0;
+    const day=days[k];
+    const ss=day.ss.sort((x,y)=>x.id-y.id);
+    let minSp=101,alarms=0;
+    const minutes=new Set();
     ss.forEach(s=>{
-      alarms+=s.alarms.length; dur+=(s.end||s.start)-s.start; cnt+=s.samples.length;
-      for(const x of s.samples) if(x[1]<minSp) minSp=x[1];
+      alarms+=s.alarms.length;
+      for(const x of s.samples){ if(x[1]<minSp) minSp=x[1]; minutes.add(Math.floor(x[0]/60000)); }
     });
-    const d=new Date(ss[0].start);
+    if(day.rem){
+      for(const r of day.rem.rows){ if(r[1]<minSp) minSp=r[1]; minutes.add(r[0]); }
+      alarms=Math.max(alarms,(day.rem.alarms||[]).length);
+    }
+    if(minSp>100) return;
+    const d=new Date((ss[0]?ss[0].start:day.rem.rows[0][0]*60000));
     const b=document.createElement('button');
     b.className='sess';
     b.innerHTML=`<div class="d">${d.toLocaleDateString('tr-TR',{weekday:'long',day:'numeric',month:'long'})}</div>
-      <div class="s">${durstr(dur)} izleme · ${ss.length} oturum · en düşük <b>${minSp}%</b> ·
-      ${alarms?`<span class="bad">${alarms} alarm</span>`:'alarm yok'}</div>`;
-    b.onclick=()=>openDay(ss);
+      <div class="s">${durstr(minutes.size*60000)} izleme · en düşük <b>${minSp}%</b> ·
+      ${alarms?`<span class="bad">${alarms} alarm</span>`:'alarm yok'}${day.rem?' · aile yayını dahil':''}</div>`;
+    b.onclick=()=>openDay(day);
     el.appendChild(b);
   });
+  if(!el.children.length) el.innerHTML='<div class="empty">Henüz kayıt yok.</div>';
 }
-function openDay(ss){
+function openDay(day){
   $('#histList').style.display='none'; $('#dayDetail').style.display='block';
+  const ss=day.ss;
   const samples=[];
   ss.forEach(s=>{ for(const x of s.samples) samples.push(x); });
-  const alarms=[]; ss.forEach(s=>{ for(const a of s.alarms) alarms.push(a); });
+  if(day.rem) for(const x of remoteSamples(day.rem)) samples.push(x);
+  const alarms=[]; const seenAl=new Set();
+  ss.forEach(s=>{ for(const a of s.alarms){ const k=Math.floor(a[0]/60000); if(!seenAl.has(k)){ seenAl.add(k); alarms.push(a); } } });
+  if(day.rem) for(const a of (day.rem.alarms||[])){ const k=Math.floor(a[0]/60000); if(!seenAl.has(k)){ seenAl.add(k); alarms.push(a); } }
   samples.sort((a,b)=>a[0]-b[0]); alarms.sort((a,b)=>a[0]-b[0]);
-  const dur=ss.reduce((a,s)=>a+((s.end||s.start)-s.start),0);
-  const d=new Date(ss[0].start);
+  const minutes=new Set(); for(const x of samples) minutes.add(Math.floor(x[0]/60000));
+  const d=new Date(samples.length?samples[0][0]:Date.now());
   $('#dayTitle').textContent=d.toLocaleDateString('tr-TR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  $('#daySub').textContent=`${durstr(dur)} izleme · ${ss.length} oturum · ${samples.length} ölçüm`;
+  $('#daySub').textContent=`${durstr(minutes.size*60000)} izleme · ${samples.length} ölçüm${day.rem?' · aile yayını dahil':''}`;
   const agg=aggStats(samples);
   $('#dayStats').innerHTML=statCards(agg,alarms.length);
   $('#dayAlarms').innerHTML=alarms.length
@@ -1056,10 +1071,13 @@ function connBroker(i){
   const c=window.mqtt.connect(BROKERS[i],{clean:true,connectTimeout:8000,reconnectPeriod:4000,clientId:'oksi_'+Math.random().toString(16).slice(2,10)});
   share.cli=c;
   c.on('connect',()=>{
-    if(share.mode==='sub'){ c.subscribe(share.topic); $('#shareStatus').textContent='İzleme hazır — bir telefon cihaza bağlanınca canlı ekran burada görünür.'; $('#shareStatus').classList.add('on'); }
-    if(share.mode==='pub'){ $('#shareStatus').textContent='Yayında ✓ Bu adresi açan diğer telefonlar canlı görüyor.'; $('#shareStatus').classList.add('on'); }
+    if(share.mode==='sub'){ c.subscribe([share.topic,share.topic.replace('/v1','/hist/+')]); $('#shareStatus').textContent='İzleme hazır — bir telefon cihaza bağlanınca canlı ekran burada görünür.'; $('#shareStatus').classList.add('on'); }
+    if(share.mode==='pub'){ $('#shareStatus').textContent='Yayında ✓ Bu adresi açan diğer telefonlar canlı görüyor.'; $('#shareStatus').classList.add('on'); publishHist(); }
   });
-  c.on('message',(t,m)=>{ if(share.mode==='sub') onRemote(m.toString()); });
+  c.on('message',(t,m)=>{
+    if(share.mode!=='sub') return;
+    if(t.indexOf('/hist/')>-1) onRemoteHist(m.toString()); else onRemote(m.toString());
+  });
   c.on('error',()=>{});
   setTimeout(()=>{ if(share.cli===c&&!c.connected){ try{c.end(true);}catch(_){} connBroker(i+1); } },9000);
 }
@@ -1100,6 +1118,7 @@ async function startViewer(){
     if(st.lastRemote&&Date.now()-st.lastRemote>30000){
       st.lastRemote=0; setNoFinger();
       setChip('','Yayın bekleniyor');
+      if(st.session&&st.session.device==='izleme') endSession();
     }
   },5000);
 }
@@ -1108,6 +1127,7 @@ function stopViewer(){
   st.viewer=false;
   if(share.mode==='sub') stopShare();
   clearInterval(st.vw);
+  if(st.session&&st.session.device==='izleme') endSession();
 }
 /* cihaz bağlıysa yayıncı, değilse izleyici ol */
 async function autoShare(){
@@ -1131,6 +1151,11 @@ async function onRemote(msg){
   st.lastReading=t;
   st.ring.push({t,spo2:o.s,pr:o.p});
   while(st.ring.length&&t-st.ring[0].t>35*60000) st.ring.shift();
+  /* izleyici de gördüğünü kaydeder — geçmiş bu telefonda da birikir */
+  if(!st.session){ startSession(); st.session.device='izleme'; }
+  st.session.samples.push([t,o.s,o.p,o.i==null?'':+(+o.i).toFixed(2),o.r==null?'':+(+o.r).toFixed(1)]);
+  st.sessDirty=true;
+  $('#vCount').textContent=st.session.samples.length;
   $('#vSpo2').textContent=o.s;
   $('#vPr').textContent=o.p;
   $('#vPi').textContent=o.i==null?'--':(+o.i).toFixed(1);
@@ -1138,6 +1163,60 @@ async function onRemote(msg){
   $('#tileSpo2').classList.toggle('low',o.s<=cfg.thr);
   checkAlarms(o.s,o.p);
   drawLive();
+}
+
+/* ---- geçmiş senkronu: kaynak, günün dakika özetini şifreli+kalıcı yayınlar ----
+   İzleyiciler bunu alıp yerel hafızada saklar; böylece Mac'te kaydedilen gece
+   telefondan da görülür. */
+async function publishHist(){
+  if(share.mode!=='pub'||!share.cli||!share.cli.connected) return;
+  const today=dayKeyOf(Date.now());
+  const list=await idbAll();
+  const ss=list.filter(s=>dayKeyOf(s.start)===today);
+  if(st.session&&st.session.samples.length&&dayKeyOf(st.session.start)===today) ss.push(st.session);
+  const mins={};
+  ss.forEach(s=>{ for(const x of s.samples){
+    const m=Math.floor(x[0]/60000);
+    const b=mins[m]=mins[m]||{n:0,sp:0,mn:101,pr:0,rr:0,rn:0};
+    b.n++; b.sp+=x[1]; b.pr+=x[2]; if(x[1]<b.mn)b.mn=x[1];
+    if(x[4]!==''&&x[4]!=null){ b.rr+=+x[4]; b.rn++; }
+  }});
+  const rows=Object.entries(mins).map(([m,b])=>[+m,b.mn,Math.round(b.sp/b.n),Math.round(b.pr/b.n),b.rn?+(b.rr/b.rn).toFixed(1):null]);
+  if(!rows.length) return;
+  const alarms=[]; ss.forEach(s=>{ for(const a of s.alarms) alarms.push([a[0],a[1],a[2]]); });
+  try{
+    share.cli.publish(share.topic.replace('/v1','/hist/'+today),
+      await encMsg(share.key,{d:today,rows,alarms}),{retain:true});
+  }catch(_){}
+}
+setInterval(publishHist,60000);
+
+async function onRemoteHist(msg){
+  try{
+    const o=await decMsg(share.key,msg);
+    if(!o.d||!o.rows) return;
+    localStorage.setItem('histday-'+o.d,JSON.stringify(o));
+    const keys=Object.keys(localStorage).filter(k=>k.startsWith('histday-')).sort();
+    while(keys.length>7) localStorage.removeItem(keys.shift());
+  }catch(_){}
+}
+function remoteDays(){
+  const out={};
+  for(const k of Object.keys(localStorage)) if(k.startsWith('histday-')){
+    try{ out[k.slice(8)]=JSON.parse(localStorage.getItem(k)); }catch(_){}
+  }
+  return out;
+}
+/* dakika özetini grafik örneklerine çevir: min ve ortalama ayrı nokta olur ki
+   kısa düşüşler grafikte kaybolmasın */
+function remoteSamples(o){
+  const out=[];
+  for(const r of o.rows){
+    const base=r[0]*60000, rr=r[4]==null?'':r[4];
+    out.push([base+15000,r[1],r[3],'',rr]);
+    out.push([base+45000,r[2],r[3],'',rr]);
+  }
+  return out;
 }
 
 /* ---- ntfy: kapalı telefonlara gerçek push ---- */
